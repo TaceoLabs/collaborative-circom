@@ -28,8 +28,8 @@
 //! Inspired by <https://github.com/arkworks-rs/circom-compat/blob/170b10fc9ed182b5f72ecf379033dda023d0bf07/src/zkey.rs>
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use ark_relations::r1cs::{ConstraintMatrices, Matrix};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_relations::r1cs::ConstraintMatrices;
+use ark_serialize::CanonicalDeserialize;
 use ark_std::log2;
 
 use std::io::Read;
@@ -46,95 +46,6 @@ use crate::{
 pub struct ZKey<P: Pairing> {
     pk: ProvingKey<P>,
     matrices: ConstraintMatrices<P::ScalarField>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub(crate) struct OurMatrix<F: CanonicalSerialize + CanonicalDeserialize> {
-    inner: Vec<Vec<(F, usize)>>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub(crate) struct OurConstraintMatrices<F: PrimeField> {
-    /// The number of variables that are "public instances" to the constraint
-    /// system.
-    pub num_instance_variables: usize,
-    /// The number of variables that are "private witnesses" to the constraint
-    /// system.
-    pub num_witness_variables: usize,
-    /// The number of constraints in the constraint system.
-    pub num_constraints: usize,
-    /// The number of non_zero entries in the A matrix.
-    pub a_num_non_zero: usize,
-    /// The number of non_zero entries in the B matrix.
-    pub b_num_non_zero: usize,
-    /// The number of non_zero entries in the C matrix.
-    pub c_num_non_zero: usize,
-
-    /// The A constraint matrix. This is empty when
-    /// `self.mode == SynthesisMode::Prove { construct_matrices = false }`.
-    pub a: OurMatrix<F>,
-    /// The B constraint matrix. This is empty when
-    /// `self.mode == SynthesisMode::Prove { construct_matrices = false }`.
-    pub b: OurMatrix<F>,
-    /// The C constraint matrix. This is empty when
-    /// `self.mode == SynthesisMode::Prove { construct_matrices = false }`.
-    pub c: OurMatrix<F>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub(crate) struct OurZKey<P: Pairing> {
-    pk: ProvingKey<P>,
-    matrices: OurConstraintMatrices<P::ScalarField>,
-}
-
-impl<P: Pairing> From<ZKey<P>> for OurZKey<P> {
-    fn from(zkey: ZKey<P>) -> Self {
-        Self {
-            pk: zkey.pk,
-            matrices: OurConstraintMatrices::from(zkey.matrices),
-        }
-    }
-}
-
-impl<F: PrimeField> From<ConstraintMatrices<F>> for OurConstraintMatrices<F> {
-    fn from(value: ConstraintMatrices<F>) -> Self {
-        Self {
-            num_instance_variables: value.num_instance_variables,
-            num_witness_variables: value.num_witness_variables,
-            num_constraints: value.num_constraints,
-            a_num_non_zero: value.a_num_non_zero,
-            b_num_non_zero: value.b_num_non_zero,
-            c_num_non_zero: value.c_num_non_zero,
-            a: OurMatrix::from(value.a),
-            b: OurMatrix::from(value.b),
-            c: OurMatrix::from(value.c),
-        }
-    }
-}
-impl<F: PrimeField> From<Matrix<F>> for OurMatrix<F> {
-    fn from(value: Matrix<F>) -> Self {
-        Self { inner: value }
-    }
-}
-
-impl<P: Pairing> From<OurZKey<P>> for ZKey<P> {
-    fn from(value: OurZKey<P>) -> Self {
-        Self {
-            pk: value.pk,
-            matrices: ConstraintMatrices {
-                num_instance_variables: value.matrices.num_instance_variables,
-                num_witness_variables: value.matrices.num_witness_variables,
-                num_constraints: value.matrices.num_constraints,
-                a_num_non_zero: value.matrices.a_num_non_zero,
-                b_num_non_zero: value.matrices.b_num_non_zero,
-                c_num_non_zero: value.matrices.c_num_non_zero,
-
-                a: value.matrices.a.inner,
-                b: value.matrices.b.inner,
-                c: value.matrices.c.inner,
-            },
-        }
-    }
 }
 
 impl<P: Pairing + CircomArkworksPairingBridge> ZKey<P>
