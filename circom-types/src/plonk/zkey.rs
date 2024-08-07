@@ -203,13 +203,9 @@ where
         Ok(lagrange)
     }
 
-    fn taus<R: Read>(domain_size: usize, mut reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
-        let mut p_tau = vec![];
-        //TODO: why domain size + 6?
-        for _ in 0..domain_size + 6 {
-            p_tau.push(P::g1_from_reader(&mut reader)?);
-        }
-        Ok(p_tau)
+    fn taus<R: Read>(domain_size: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        // //TODO: why domain size + 6?
+        Ok(P::g1_vec_from_reader(reader, domain_size + 6)?)
     }
 }
 
@@ -229,18 +225,18 @@ where
         //the sigmas are in the same section - so we split it here in separate chunks
         let sigma_section_size = domain_size * header.n8r + domain_size * 4 * header.n8r;
 
-        let mut add_section = binfile.take_section(3);
-        let mut a_section = binfile.take_section(4);
-        let mut b_section = binfile.take_section(5);
-        let mut c_section = binfile.take_section(6);
-        let mut qm_section = binfile.take_section(7);
-        let mut ql_section = binfile.take_section(8);
-        let mut qr_section = binfile.take_section(9);
-        let mut q0_section = binfile.take_section(10);
-        let mut qc_section = binfile.take_section(11);
+        let add_section = binfile.take_section(3);
+        let a_section = binfile.take_section(4);
+        let b_section = binfile.take_section(5);
+        let c_section = binfile.take_section(6);
+        let qm_section = binfile.take_section(7);
+        let ql_section = binfile.take_section(8);
+        let qr_section = binfile.take_section(9);
+        let q0_section = binfile.take_section(10);
+        let qc_section = binfile.take_section(11);
         let sigma_sections = binfile.take_section_raw(12);
-        let mut l_section = binfile.take_section(13);
-        let mut t_section = binfile.take_section(14);
+        let l_section = binfile.take_section(13);
+        let t_section = binfile.take_section(14);
         let sigma1_section = Cursor::new(&sigma_sections[..sigma_section_size]);
         let sigma2_section =
             Cursor::new(&sigma_sections[sigma_section_size..sigma_section_size * 2]);
@@ -261,20 +257,20 @@ where
         let mut lagrange = None;
         let mut p_tau = None;
         rayon::scope(|s| {
-            s.spawn(|_| additions = Some(Self::additions_indices(n_additions, &mut add_section)));
-            s.spawn(|_| map_a = Some(Self::id_map(n_constraints, &mut a_section)));
-            s.spawn(|_| map_b = Some(Self::id_map(n_constraints, &mut b_section)));
-            s.spawn(|_| map_c = Some(Self::id_map(n_constraints, &mut c_section)));
-            s.spawn(|_| qm = Some(Self::evaluations(domain_size, &mut qm_section)));
-            s.spawn(|_| ql = Some(Self::evaluations(domain_size, &mut ql_section)));
-            s.spawn(|_| qr = Some(Self::evaluations(domain_size, &mut qr_section)));
-            s.spawn(|_| q0 = Some(Self::evaluations(domain_size, &mut q0_section)));
-            s.spawn(|_| qc = Some(Self::evaluations(domain_size, &mut qc_section)));
+            s.spawn(|_| additions = Some(Self::additions_indices(n_additions, add_section)));
+            s.spawn(|_| map_a = Some(Self::id_map(n_constraints, a_section)));
+            s.spawn(|_| map_b = Some(Self::id_map(n_constraints, b_section)));
+            s.spawn(|_| map_c = Some(Self::id_map(n_constraints, c_section)));
+            s.spawn(|_| qm = Some(Self::evaluations(domain_size, qm_section)));
+            s.spawn(|_| ql = Some(Self::evaluations(domain_size, ql_section)));
+            s.spawn(|_| qr = Some(Self::evaluations(domain_size, qr_section)));
+            s.spawn(|_| q0 = Some(Self::evaluations(domain_size, q0_section)));
+            s.spawn(|_| qc = Some(Self::evaluations(domain_size, qc_section)));
             s.spawn(|_| sigma1 = Some(Self::evaluations(domain_size, sigma1_section)));
             s.spawn(|_| sigma2 = Some(Self::evaluations(domain_size, sigma2_section)));
             s.spawn(|_| sigma3 = Some(Self::evaluations(domain_size, sigma3_section)));
-            s.spawn(|_| lagrange = Some(Self::lagrange(n_public, domain_size, &mut l_section)));
-            s.spawn(|_| p_tau = Some(Self::taus(domain_size, &mut t_section)));
+            s.spawn(|_| lagrange = Some(Self::lagrange(n_public, domain_size, l_section)));
+            s.spawn(|_| p_tau = Some(Self::taus(domain_size, t_section)));
         });
         Ok(Self {
             n_vars,

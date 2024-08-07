@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{PrimeField, Zero};
 use ark_serialize::SerializationError;
+use rayon::prelude::*;
 use serde::ser::SerializeSeq;
 use serde::{de, Serializer};
 use std::str::FromStr;
@@ -84,14 +85,13 @@ mod $mod_name {
             const G2_SERIALIZED_BYTE_SIZE_UNCOMPRESSED: usize = $field_size * 2 * 2;
             const GT_SERIALIZED_BYTE_SIZE_COMPRESSED: usize = 0;
             const GT_SERIALIZED_BYTE_SIZE_UNCOMPRESSED: usize = 0;
+
             //Circom serializes its field elements in montgomery form
             //therefore we use Fq::from_reader_unchecked
-            fn g1_from_reader(mut reader: impl Read) -> IoResult<Self::G1Affine> {
-                let mut buf = [0u8; Self::G1_SERIALIZED_BYTE_SIZE_UNCOMPRESSED];
-                reader.read_exact(&mut buf)?;
+            fn g1_from_bytes(bytes: &[u8]) -> IoResult<Self::G1Affine> {
                 //already in montgomery form
-                let x = Fq::from_reader_unchecked(&buf[..Fq::SERIALIZED_BYTE_SIZE])?;
-                let y = Fq::from_reader_unchecked(&buf[Fq::SERIALIZED_BYTE_SIZE..])?;
+                let x = Fq::from_reader_unchecked(&bytes[..Fq::SERIALIZED_BYTE_SIZE])?;
+                let y = Fq::from_reader_unchecked(&bytes[Fq::SERIALIZED_BYTE_SIZE..])?;
 
                 if x.is_zero() && y.is_zero() {
                     return Ok(Self::G1Affine::zero());
@@ -108,19 +108,17 @@ mod $mod_name {
                 Ok(p)
             }
 
-            fn g2_from_reader(mut reader: impl Read) -> IoResult<Self::G2Affine> {
-                let mut buf = [0u8; Self::G2_SERIALIZED_BYTE_SIZE_UNCOMPRESSED];
-                reader.read_exact(&mut buf)?;
+            fn g2_from_bytes(bytes: &[u8]) -> IoResult<Self::G2Affine> {
                 //already in montgomery form
-                let x0 = Fq::from_reader_unchecked(&buf[..Fq::SERIALIZED_BYTE_SIZE])?;
+                let x0 = Fq::from_reader_unchecked(&bytes[..Fq::SERIALIZED_BYTE_SIZE])?;
                 let x1 = Fq::from_reader_unchecked(
-                    &buf[Fq::SERIALIZED_BYTE_SIZE..Fq::SERIALIZED_BYTE_SIZE * 2],
+                    &bytes[Fq::SERIALIZED_BYTE_SIZE..Fq::SERIALIZED_BYTE_SIZE * 2],
                 )?;
                 let y0 = Fq::from_reader_unchecked(
-                    &buf[Fq::SERIALIZED_BYTE_SIZE * 2..Fq::SERIALIZED_BYTE_SIZE * 3],
+                    &bytes[Fq::SERIALIZED_BYTE_SIZE * 2..Fq::SERIALIZED_BYTE_SIZE * 3],
                 )?;
                 let y1 = Fq::from_reader_unchecked(
-                    &buf[Fq::SERIALIZED_BYTE_SIZE * 3..Fq::SERIALIZED_BYTE_SIZE * 4],
+                    &bytes[Fq::SERIALIZED_BYTE_SIZE * 3..Fq::SERIALIZED_BYTE_SIZE * 4],
                 )?;
 
                 let x = Fq2::new(x0, x1);
@@ -138,6 +136,18 @@ mod $mod_name {
                     return Err(SerializationError::InvalidData);
                 }
                 Ok(p)
+            }
+
+            fn g1_from_reader(mut reader: impl Read) -> IoResult<Self::G1Affine> {
+                let mut buf = [0u8; Self::G1_SERIALIZED_BYTE_SIZE_UNCOMPRESSED];
+                reader.read_exact(&mut buf)?;
+                Self::g1_from_bytes(&buf)
+            }
+
+            fn g2_from_reader(mut reader: impl Read) -> IoResult<Self::G2Affine> {
+                let mut buf = [0u8; Self::G2_SERIALIZED_BYTE_SIZE_UNCOMPRESSED];
+                reader.read_exact(&mut buf)?;
+                Self::g2_from_bytes(&buf)
             }
 
             fn g1_from_strings_projective(x: &str, y: &str, z: &str) -> IoResult<Self::G1Affine> {
@@ -512,10 +522,30 @@ where
     const GT_SERIALIZED_BYTE_SIZE_COMPRESSED: usize;
     /// Size of uncompressed element of Gt in bytes
     const GT_SERIALIZED_BYTE_SIZE_UNCOMPRESSED: usize;
+    /// Deserializes element of G1 from bytes where the element is already in montgomery form (no montgomery reduction performed)
+    fn g1_from_bytes(bytes: &[u8]) -> IoResult<Self::G1Affine>;
+    /// Deserializes element of G2 from bytes where the element is already in montgomery form (no montgomery reduction performed)
+    fn g2_from_bytes(bytes: &[u8]) -> IoResult<Self::G2Affine>;
     /// Deserializes element of G1 from reader where the element is already in montgomery form (no montgomery reduction performed)
     fn g1_from_reader(reader: impl Read) -> IoResult<Self::G1Affine>;
     /// Deserializes element of G2 from reader where the element is already in montgomery form (no montgomery reduction performed)
     fn g2_from_reader(reader: impl Read) -> IoResult<Self::G2Affine>;
+    /// Deserializes vec of G1 from reader where the elements are already in montgomery form (no montgomery reduction performed)
+    fn g1_vec_from_reader(mut reader: impl Read, num: usize) -> IoResult<Vec<Self::G1Affine>> {
+        let mut buf = vec![0u8; Self::G1_SERIALIZED_BYTE_SIZE_UNCOMPRESSED * num];
+        reader.read_exact(&mut buf)?;
+        buf.par_chunks_exact(Self::G1_SERIALIZED_BYTE_SIZE_UNCOMPRESSED)
+            .map(|chunk| Self::g1_from_bytes(chunk))
+            .collect::<Result<Vec<_>, SerializationError>>()
+    }
+    /// Deserializes vec of G2 from reader where the elements are already in montgomery form (no montgomery reduction performed)
+    fn g2_vec_from_reader(mut reader: impl Read, num: usize) -> IoResult<Vec<Self::G2Affine>> {
+        let mut buf = vec![0u8; Self::G2_SERIALIZED_BYTE_SIZE_UNCOMPRESSED * num];
+        reader.read_exact(&mut buf)?;
+        buf.par_chunks_exact(Self::G2_SERIALIZED_BYTE_SIZE_UNCOMPRESSED)
+            .map(|chunk| Self::g2_from_bytes(chunk))
+            .collect::<Result<Vec<_>, SerializationError>>()
+    }
     /// Deserializes element of G1 from strings representing projective coordinates
     fn g1_from_strings_projective(x: &str, y: &str, z: &str) -> IoResult<Self::G1Affine>;
     /// Deserializes element of G2 from strings representing projective coordinates
