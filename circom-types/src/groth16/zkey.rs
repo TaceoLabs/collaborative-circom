@@ -29,44 +29,17 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintMatrices, Matrix};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use byteorder::{LittleEndian, ReadBytesExt};
-use thiserror::Error;
 
-use std::{
-    collections::HashMap,
-    io::{Read, Seek, SeekFrom},
-    marker::PhantomData,
-};
+use std::io::Read;
 
 use ark_groth16::{ProvingKey, VerifyingKey};
 
-use crate::traits::{CircomArkworksPairingBridge, CircomArkworksPrimeFieldBridge};
-
-use crate::reader_utils;
-type OurResult<T> = std::result::Result<T, ZKeyParserError>;
-
-/// Error type describing errors during parsing zkey files
-#[derive(Debug, Error)]
-pub enum ZKeyParserError {
-    /// Error during serialization
-    #[error(transparent)]
-    SerializationError(#[from] SerializationError),
-    /// Error describing that an invalid modulus was found in the header for the chosen curve
-    #[error("invalid modulus found in header for chosen curve")]
-    InvalidGroth16Header,
-    /// Error during IO operations (reading/opening file, etc.)
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-}
-
-#[derive(Clone, Debug)]
-struct Section {
-    position: u64,
-    #[allow(dead_code)]
-    size: usize,
-}
+use crate::{
+    binfile::{BinFile, ZKeyParserError, ZKeyParserResult},
+    traits::{CircomArkworksPairingBridge, CircomArkworksPrimeFieldBridge},
+};
 
 /// Represents a zkey in the format defined by circom. Implements [`ZKey::from_reader`] to deserialize a zkey from a reader.
 #[derive(Clone)]
@@ -170,151 +143,131 @@ where
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
     /// Deserializes a [`ZKey`] from a reader.
-    pub fn from_reader<R: Read + Seek>(mut reader: R) -> OurResult<Self> {
-        let mut binfile = BinFile::<_, P>::new(&mut reader)?;
-        let pk = binfile.proving_key()?;
-        let matrices = binfile.matrices()?;
-        Ok(Self { pk, matrices })
+    pub fn from_reader<R: Read>(mut reader: R) -> ZKeyParserResult<Self> {
+        BinFile::<P>::new(&mut reader)?.try_into()
     }
 
     /// Splits the zkey into its [`ProvingKey`] and [`ConstraintMatrices`] components
     pub fn split(self) -> (ProvingKey<P>, ConstraintMatrices<P::ScalarField>) {
         (self.pk, self.matrices)
     }
-}
 
-#[derive(Debug)]
-struct BinFile<'a, R, P: Pairing + CircomArkworksPairingBridge>
-where
-    P::BaseField: CircomArkworksPrimeFieldBridge,
-    P::ScalarField: CircomArkworksPrimeFieldBridge,
-{
-    #[allow(dead_code)]
-    ftype: String,
-    #[allow(dead_code)]
-    version: u32,
-    sections: HashMap<u32, Vec<Section>>,
-    reader: &'a mut R,
-    phantom_data: PhantomData<P>,
-}
-
-impl<'a, R: Read + Seek, P: Pairing + CircomArkworksPairingBridge> BinFile<'a, R, P>
-where
-    P::BaseField: CircomArkworksPrimeFieldBridge,
-    P::ScalarField: CircomArkworksPrimeFieldBridge,
-{
-    fn new(reader: &'a mut R) -> OurResult<Self> {
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
-
-        let version = reader.read_u32::<LittleEndian>()?;
-
-        let num_sections = reader.read_u32::<LittleEndian>()?;
-
-        let mut sections = HashMap::new();
-        for _ in 0..num_sections {
-            let section_id = reader.read_u32::<LittleEndian>()?;
-            let section_length = reader.read_u64::<LittleEndian>()?;
-
-            let section = sections.entry(section_id).or_insert_with(Vec::new);
-            section.push(Section {
-                position: reader.stream_position()?,
-                size: section_length as usize,
-            });
-
-            reader.seek(SeekFrom::Current(section_length as i64))?;
-        }
-
-        Ok(Self {
-            ftype: std::str::from_utf8(&magic[..]).unwrap().to_string(),
-            version,
-            sections,
-            reader,
-            phantom_data: PhantomData::<P>,
-        })
+    fn ic<R: Read>(n_public: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        // the range is non-inclusive so we do +1 to get all inputs
+        Ok(P::g1_vec_from_reader(reader, n_public + 1)?)
     }
 
-    fn proving_key(&mut self) -> OurResult<ProvingKey<P>> {
-        let header = self.groth_header()?;
-        let ic = self.ic(header.n_public)?;
+    fn a_query<R: Read>(n_vars: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        Ok(P::g1_vec_from_reader(reader, n_vars)?)
+    }
 
-        let a_query = self.a_query(header.n_vars)?;
-        let b_g1_query = self.b_g1_query(header.n_vars)?;
-        let b_g2_query = self.b_g2_query(header.n_vars)?;
-        let l_query = self.l_query(header.n_vars - header.n_public - 1)?;
-        let h_query = self.h_query(header.domain_size as usize)?;
+    fn b_g1_query<R: Read>(n_vars: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        Ok(P::g1_vec_from_reader(reader, n_vars)?)
+    }
+
+    fn b_g2_query<R: Read>(n_vars: usize, reader: R) -> ZKeyParserResult<Vec<P::G2Affine>> {
+        Ok(P::g2_vec_from_reader(reader, n_vars)?)
+    }
+
+    fn l_query<R: Read>(n_vars: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        Ok(P::g1_vec_from_reader(reader, n_vars)?)
+    }
+
+    fn h_query<R: Read>(n_vars: usize, reader: R) -> ZKeyParserResult<Vec<P::G1Affine>> {
+        Ok(P::g1_vec_from_reader(reader, n_vars)?)
+    }
+}
+
+impl<P: Pairing + CircomArkworksPairingBridge> TryFrom<BinFile<P>> for ZKey<P>
+where
+    P::BaseField: CircomArkworksPrimeFieldBridge,
+    P::ScalarField: CircomArkworksPrimeFieldBridge,
+{
+    type Error = ZKeyParserError;
+    fn try_from(mut binfile: BinFile<P>) -> Result<Self, Self::Error> {
+        let header = HeaderGroth::<P>::read(&mut binfile.take_section(2))?;
+        let n_vars = header.n_vars;
+        let n_public = header.n_public;
+        let domain_size = header.domain_size;
+
+        // parse proving key
+
+        let ic_section = binfile.take_section(3);
+        let a_section = binfile.take_section(5);
+        let b_g1_section = binfile.take_section(6);
+        let b_g2_section = binfile.take_section(7);
+        let l_section = binfile.take_section(8);
+        let h_section = binfile.take_section(9);
+
+        let mut ic = None;
+        let mut a_query = None;
+        let mut b_g1_query = None;
+        let mut b_g2_query = None;
+        let mut l_query = None;
+        let mut h_query = None;
+
+        rayon::scope(|s| {
+            s.spawn(|_| ic = Some(Self::ic(n_public, ic_section)));
+            s.spawn(|_| a_query = Some(Self::a_query(n_vars, a_section)));
+            s.spawn(|_| b_g1_query = Some(Self::b_g1_query(n_vars, b_g1_section)));
+            s.spawn(|_| b_g2_query = Some(Self::b_g2_query(n_vars, b_g2_section)));
+            s.spawn(|_| l_query = Some(Self::l_query(n_vars - n_public - 1, l_section)));
+            s.spawn(|_| h_query = Some(Self::h_query(domain_size as usize, h_section)));
+        });
 
         let vk = VerifyingKey::<P> {
             alpha_g1: header.verifying_key.alpha_g1,
             beta_g2: header.verifying_key.beta_g2,
             gamma_g2: header.verifying_key.gamma_g2,
             delta_g2: header.verifying_key.delta_g2,
-            gamma_abc_g1: ic,
+            gamma_abc_g1: ic.unwrap()?,
         };
 
         let pk = ProvingKey::<P> {
             vk,
             beta_g1: header.verifying_key.beta_g1,
             delta_g1: header.verifying_key.delta_g1,
-            a_query,
-            b_g1_query,
-            b_g2_query,
-            h_query,
-            l_query,
+            a_query: a_query.unwrap()?,
+            b_g1_query: b_g1_query.unwrap()?,
+            b_g2_query: b_g2_query.unwrap()?,
+            h_query: h_query.unwrap()?,
+            l_query: l_query.unwrap()?,
         };
 
-        Ok(pk)
-    }
+        // parse matrices
 
-    fn get_section(&self, id: u32) -> Section {
-        self.sections.get(&id).unwrap()[0].clone()
-    }
+        let mut matrices_section = binfile.take_section(4);
 
-    fn groth_header(&mut self) -> OurResult<HeaderGroth<P>> {
-        let section = self.get_section(2);
-        let header = HeaderGroth::new(&mut self.reader, &section)?;
-        Ok(header)
-    }
-
-    fn ic(&mut self, n_public: usize) -> OurResult<Vec<P::G1Affine>> {
-        // the range is non-inclusive so we do +1 to get all inputs
-        self.g1_section(n_public + 1, 3)
-    }
-
-    /// Returns the [`ConstraintMatrices`] corresponding to the zkey
-    pub fn matrices(&mut self) -> OurResult<ConstraintMatrices<P::ScalarField>> {
-        let header = self.groth_header()?;
-
-        let section = self.get_section(4);
-        self.reader.seek(SeekFrom::Start(section.position))?;
-        let num_coeffs: u32 = self.reader.read_u32::<LittleEndian>()?;
+        let num_coeffs = u32::deserialize_uncompressed(&mut matrices_section)?;
 
         // instantiate AB
-        let mut matrices = vec![vec![vec![]; header.domain_size as usize]; 2];
+        let mut matrices = vec![vec![vec![]; domain_size as usize]; 2];
         let mut max_constraint_index = 0;
         for _ in 0..num_coeffs {
-            let matrix: u32 = self.reader.read_u32::<LittleEndian>()?;
-            let constraint: u32 = self.reader.read_u32::<LittleEndian>()?;
-            let signal: u32 = self.reader.read_u32::<LittleEndian>()?;
+            let matrix = u32::deserialize_uncompressed(&mut matrices_section)?;
+            let constraint = u32::deserialize_uncompressed(&mut matrices_section)?;
+            let signal = u32::deserialize_uncompressed(&mut matrices_section)?;
 
-            let value = P::ScalarField::from_reader_unchecked_for_zkey(&mut self.reader)?;
+            let value = P::ScalarField::from_reader_unchecked_for_zkey(&mut matrices_section)?;
             max_constraint_index = std::cmp::max(max_constraint_index, constraint);
             matrices[matrix as usize][constraint as usize].push((value, signal as usize));
         }
 
-        let num_constraints = max_constraint_index as usize - header.n_public;
+        let num_constraints = max_constraint_index as usize - n_public;
         // Remove the public input constraints, Arkworks adds them later
         matrices.iter_mut().for_each(|m| {
             m.truncate(num_constraints);
         });
+
         // This is taken from Arkworks' to_matrices() function
         let a = matrices[0].clone();
         let b = matrices[1].clone();
         let a_num_non_zero: usize = a.iter().map(|lc| lc.len()).sum();
         let b_num_non_zero: usize = b.iter().map(|lc| lc.len()).sum();
+
         let matrices = ConstraintMatrices {
-            num_instance_variables: header.n_public + 1,
-            num_witness_variables: header.n_vars - header.n_public,
+            num_instance_variables: n_public + 1,
+            num_witness_variables: n_vars - n_public,
             num_constraints,
 
             a_num_non_zero,
@@ -326,39 +279,7 @@ where
             c: vec![],
         };
 
-        Ok(matrices)
-    }
-
-    fn a_query(&mut self, n_vars: usize) -> OurResult<Vec<P::G1Affine>> {
-        self.g1_section(n_vars, 5)
-    }
-
-    fn b_g1_query(&mut self, n_vars: usize) -> OurResult<Vec<P::G1Affine>> {
-        self.g1_section(n_vars, 6)
-    }
-
-    fn b_g2_query(&mut self, n_vars: usize) -> OurResult<Vec<P::G2Affine>> {
-        self.g2_section(n_vars, 7)
-    }
-
-    fn l_query(&mut self, n_vars: usize) -> OurResult<Vec<P::G1Affine>> {
-        self.g1_section(n_vars, 8)
-    }
-
-    fn h_query(&mut self, n_vars: usize) -> OurResult<Vec<P::G1Affine>> {
-        self.g1_section(n_vars, 9)
-    }
-
-    fn g1_section(&mut self, num: usize, section_id: usize) -> OurResult<Vec<P::G1Affine>> {
-        let section = self.get_section(section_id as u32);
-        self.reader.seek(SeekFrom::Start(section.position))?;
-        Ok(reader_utils::read_g1_vector::<P, _>(&mut self.reader, num)?)
-    }
-
-    fn g2_section(&mut self, num: usize, section_id: usize) -> OurResult<Vec<P::G2Affine>> {
-        let section = self.get_section(section_id as u32);
-        self.reader.seek(SeekFrom::Start(section.position))?;
-        Ok(reader_utils::read_g2_vector::<P, _>(&mut self.reader, num)?)
+        Ok(ZKey { pk, matrices })
     }
 }
 
@@ -377,7 +298,7 @@ where
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
-    fn new<R: Read>(mut reader: R) -> OurResult<Self> {
+    fn new<R: Read>(mut reader: R) -> ZKeyParserResult<Self> {
         let alpha_g1 = P::g1_from_reader(&mut reader)?;
         let beta_g1 = P::g1_from_reader(&mut reader)?;
         let beta_g2 = P::g2_from_reader(&mut reader)?;
@@ -418,19 +339,14 @@ where
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
-    fn new<R: Read + Seek>(reader: &mut R, section: &Section) -> OurResult<Self> {
-        reader.seek(SeekFrom::Start(section.position))?;
-        Self::read(reader)
-    }
-
-    fn read<R: Read>(mut reader: &mut R) -> OurResult<Self> {
+    fn read<R: Read>(mut reader: &mut R) -> ZKeyParserResult<Self> {
         // TODO: Impl From<u32> in Arkworks
         let n8q: u32 = u32::deserialize_uncompressed(&mut reader)?;
         //modulos of BaseField
         let q = <P::BaseField as PrimeField>::BigInt::deserialize_uncompressed(&mut reader)?;
         let modulus = <P::BaseField as PrimeField>::MODULUS;
         if q != modulus {
-            return Err(ZKeyParserError::InvalidGroth16Header);
+            return Err(ZKeyParserError::InvalidPrimeInHeader);
         }
         let n8r: u32 = u32::deserialize_uncompressed(&mut reader)?;
         //modulos of ScalarField
@@ -828,7 +744,8 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = vec![g1_one(); n_vars];
 
-        let de = reader_utils::read_g1_vector::<Bn254, _>(buf.as_slice(), n_vars).unwrap();
+        let de = <Bn254 as CircomArkworksPairingBridge>::g1_vec_from_reader(buf.as_slice(), n_vars)
+            .unwrap();
         assert_eq!(expected, de);
     }
 
@@ -852,7 +769,8 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = vec![g2_one(); n_vars];
 
-        let de = reader_utils::read_g2_vector::<Bn254, _>(buf.as_slice(), n_vars).unwrap();
+        let de = <Bn254 as CircomArkworksPairingBridge>::g2_vec_from_reader(buf.as_slice(), n_vars)
+            .unwrap();
         assert_eq!(expected, de);
     }
 }

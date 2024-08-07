@@ -37,3 +37,10 @@ tracing.workspace = true
 serde_json.workspace = true
 ark-groth16.workspace = true
 figment.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "zkey_parse"
+harness = false
