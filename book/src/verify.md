@@ -13,15 +13,18 @@ The above command verifies the proof in `proof.json` using the verification key 
 ## Reference
 
 ```txt
-co-circom verify --help`
 Verification of a Circom proof
 
-Usage: co-circom verify --proof <PROOF> --curve <CURVE> --vk <VK> --public-input <PUBLIC_INPUT>
+Usage: co-circom verify [OPTIONS] --config <CONFIG> --proof <PROOF> --vk <VK> --public-input <PUBLIC_INPUT> <PROOFSYSTEM>
+
+Arguments:
+  <PROOFSYSTEM>  [possible values: groth16, plonk]
 
 Options:
+      --config <CONFIG>              The path to the config file
       --proof <PROOF>                The path to the proof file
       --curve <CURVE>                The pairing friendly curve to be used [possible values: BN254, BLS12-381]
       --vk <VK>                      The path to the verification key file
       --public-input <PUBLIC_INPUT>  The path to the public input JSON file
-  -h, --help                         Print help
+  -h, --help                         Print help (see more with '--help')
 ```

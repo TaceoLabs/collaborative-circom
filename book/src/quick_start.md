@@ -3,7 +3,7 @@
 Collaborative Circom is an implementation of [collaborative SNARKs](./collsnarks.md), with a focus on the [Circom](https://circom.io) framework.
 In contrast to traditional SNARKs, which are run by a single prover, collaborative SNARKs are executed using a [multiparty computation protocol](./mpc.md).
 
-If you just want to get your hands dirty as fast as possible, here is a run-down on how to collaboratively prove the `Multiplier2` example from the [Circom documentation](https://docs.circom.io/getting-started/installation/).
+If you just want to get your hands dirty as fast as possible, here is a run-down on how to collaboratively prove the `Multiplier2` example from the [Circom documentation](https://docs.circom.io/getting-started/installation/) using Groth16.
 
 First of all, here is the relevant Circom file:
 
@@ -108,10 +108,10 @@ After all parties finished successfully, you will have three witness files in yo
 
 ## Prove the Circuit
 
-We need another MPC step to finally get our co-SNARK proof. We can reuse TLS certificates and the network config from the previous step. Also, we finally need the proving key from the very first step! In your terminal execute the following command:
+We need another MPC step to finally get our co-SNARK Groht16 proof. We can reuse TLS certificates and the network config from the previous step. Also, we finally need the proving key from the very first step! In your terminal execute the following command:
 
 ```bash
-$ co-circom generate-proof --witness out/witness.wtns.0.shared --zkey multiplier2.zkey --protocol REP3 --curve BN254 --config configs/party0.toml --out proof.0.json --public-input public_input.json
+$ co-circom generate-proof groth16 --witness out/witness.wtns.0.shared --zkey multiplier2.zkey --protocol REP3 --curve BN254 --config configs/party0.toml --out proof.0.json --public-input public_input.json
 
 INFO co_circom: 418: Wrote proof to file proof.0.json
 INFO co_circom: 438: Proof generation finished successfully
@@ -134,7 +134,7 @@ This is the factored number and the public input `b`.
 To verify we can either use snarkjs or the `co-circom` binary.
 
 ```bash
-$ co-circom verify --proof proof.0.json --vk verification_key.json --public-input public_input.json --curve BN254
+$ co-circom verify groth16 --proof proof.0.json --vk verification_key.json --public-input public_input.json --curve BN254
 co_circom: 483: Proof verified successfully
 
 $ snarkjs groth16 verify verification_key.json public_input.json proof.0.json
