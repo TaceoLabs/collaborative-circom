@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0](https://github.com/TaceoLabs/collaborative-circom/compare/circom-mpc-vm-v0.2.0...circom-mpc-vm-v0.3.0) (2024-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* new config implementation, config option to allow leaking of secret values in logs ([#132](https://github.com/TaceoLabs/collaborative-circom/issues/132))
+* the function signature of the two run methods of the witness extension now changed. To retrieve the shared witness now another call `into_shared_witness()` is necessary.
+
+### Features
+
+* can now retrieve certain outputs after witness extension by name ([d9e3399](https://github.com/TaceoLabs/collaborative-circom/commit/d9e33996d10cea5f8197d507a13ed9087f0f4c20))
+* plonk support ([9b65797](https://github.com/TaceoLabs/collaborative-circom/commit/9b6579724f6f5ba4fc6af8a98d386b96818dc08b))
+
+
+### Bug Fixes
+
+* **docs:** added &gt; for a block because of clippy ([f054999](https://github.com/TaceoLabs/collaborative-circom/commit/f054999ce60ddb3ef61bfdd5fe0b294919eacf3b))
+
+
+### Code Refactoring
+
+* new config implementation, config option to allow leaking of secret values in logs ([#132](https://github.com/TaceoLabs/collaborative-circom/issues/132)) ([964b04f](https://github.com/TaceoLabs/collaborative-circom/commit/964b04f47e8d491ae140cb7c10c596e1c40b6b5c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * collaborative-groth16 bumped from 0.2.1 to 0.3.0
+    * mpc-core bumped from 0.2.1 to 0.3.0
+
 ## [0.2.0](https://github.com/TaceoLabs/collaborative-circom/compare/circom-mpc-vm-v0.1.1...circom-mpc-vm-v0.2.0) (2024-07-10)
 
 

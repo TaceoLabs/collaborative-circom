@@ -1,6 +1,6 @@
 [package]
 name = "collaborative-groth16"
-version = "0.2.1"
+version = "0.3.0"
 publish.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -21,10 +21,10 @@ ark-poly = { workspace = true }
 ark-relations = { workspace = true }
 ark-serialize = { workspace = true }
 ark-std = { workspace = true }
-circom-types = { version = "0.3.0", path = "../circom-types" }
+circom-types = { version = "0.4.0", path = "../circom-types" }
 eyre = { workspace = true }
 itertools = { workspace = true }
-mpc-core = { version = "0.2.1", path = "../mpc-core" }
+mpc-core = { version = "0.3.0", path = "../mpc-core" }
 mpc-net = { version = "0.1.2", path = "../mpc-net" }
 num-traits = { workspace = true }
 rand = { workspace = true }

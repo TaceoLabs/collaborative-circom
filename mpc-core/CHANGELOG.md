@@ -2,6 +2,19 @@
 
 
 
+## [0.3.0](https://github.com/TaceoLabs/collaborative-circom/compare/mpc-core-v0.2.1...mpc-core-v0.3.0) (2024-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* Added functionality for MPC traits
+* Add possibility to use Shamir secret sharing for proofing and
+
+### Features
+
+* Add possibility to use Shamir secret sharing for proofing and ([6205475](https://github.com/TaceoLabs/collaborative-circom/commit/6205475b78d4654c61f5058befe5d5990da19432))
+* Added functionality for MPC traits ([0897066](https://github.com/TaceoLabs/collaborative-circom/commit/089706629ab863814276309b330744f909c976cd))
+
 ## [0.2.0](https://github.com/TaceoLabs/collaborative-circom/compare/mpc-core-v0.1.0...mpc-core-v0.2.0) (2024-07-09)
 
 
