@@ -14,8 +14,8 @@ proof** (ZKP). It leverages the existing domain-specific language
 coCircom, all existing circom circuits can be promoted to coSNARKs without any
 modification to the original circuit.
 
-Additionally, coCircom is fully compatible with the **Groth16** backend of
-[snarkjs](https://github.com/iden3/snarkjs), the native proofing system for
+Additionally, coCircom is fully compatible with the **Groth16** and **Plonk** backends of
+[snarkjs](https://github.com/iden3/snarkjs), the native proofing systems for
 circom. Proofs built with coCircom can be verified using snarkjs, and vice
 versa.
 
@@ -28,6 +28,8 @@ The project is built with pure Rust and consists of multiple libraries:
 - **circom-types**: A library for serialization and deserialization of snarkjs
   artifacts, such as ZKeys and R1CS files.
 - **collaborative-groth16**: A library for verifying and proofing a Groth16
+  coSNARK, verifiable by snarkjs.
+- **collaborative-plonk**: A library for verifying and proofing a Plonk
   coSNARK, verifiable by snarkjs.
 
 The following libraries are agnostic to coCircom and will be used in the future
@@ -88,7 +90,7 @@ You can find the documentation of coCircom [here](https://docs.taceo.io/).
 
 ## CLI Usage
 
-This section covers the necessary steps to build a coSNARK using the previously
+This section covers the necessary steps to build a Groth16 coSNARK using the previously
 installed coCircom binary. For demonstration purposes, we will use a simple
 circuit called `adder.circom`.
 
@@ -215,7 +217,7 @@ until all nodes have finished, so you will likely need three separate terminals
 Next, we generate the proof. Each computing node executes the following command:
 
 ```bash
-./co-circom generate-proof --witness out/witness.wtns.0.shared --zkey adder.zkey --protocol REP3 --curve BN254 --config configs/party1.toml --out proof.0.json --public-input public_input.0.json
+./co-circom generate-proof groth16 --witness out/witness.wtns.0.shared --zkey adder.zkey --protocol REP3 --curve BN254 --config configs/party1.toml --out proof.0.json --public-input public_input.0.json
 ```
 
 Remember to execute this command on all three nodes.
@@ -226,14 +228,14 @@ You can verify the proof using either coCircom or snarkjs. Here's the command
 for using coCircom:
 
 ```bash
-./co-circom verify --proof proof.0.json --vk verification_key.json --public-input public_input.0.json --curve BN254
+./co-circom verify groth16 --proof proof.0.json --vk verification_key.json --public-input public_input.0.json --curve BN254
 ```
 
 **Note**: The `verification_key.json` was generated in Step 2.
 
 For more examples, please refer to the
 [examples folder](/collaborative-circom/examples/). You'll find bash scripts
-there that demonstrate all the necessary steps.
+there that demonstrate all the necessary steps, as well as scripts for using Plonk instead of Groth16.
 
 ## License
 

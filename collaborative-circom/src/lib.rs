@@ -27,6 +27,15 @@ use serde::Deserialize;
 /// A module for file utility functions.
 pub mod file_utils;
 
+/// An enum representing the ZK proof system to use.
+#[derive(Clone, ValueEnum)]
+pub enum ProofSystem {
+    /// The Groth16 proof system.
+    Groth16,
+    /// The Plonk proof system.
+    Plonk,
+}
+
 /// An enum representing the MPC protocol to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 pub enum MPCCurve {
@@ -107,7 +116,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new config with given path   
+    /// Create a new config with given path
     pub fn new(path: &str) -> color_eyre::Result<Config> {
         Ok(Figment::new()
             .merge(Toml::file(path))
