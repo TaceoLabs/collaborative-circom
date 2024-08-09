@@ -10,6 +10,9 @@ license.workspace = true
 rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = []
+dangerous = []
 
 [dependencies]
 ark-bls12-381 = { workspace = true }

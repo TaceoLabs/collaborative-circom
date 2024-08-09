@@ -13,27 +13,31 @@ type IoResult<T> = Result<T, SerializationError>;
 
 macro_rules! impl_bn256 {
     () => {
-        //TODO use stringify
-        impl_serde_for_curve!(bn254, Bn254, ark_bn254, "bn254", 32, 32, "bn128");
+        impl_serde_for_curve!(bn254, Bn254, ark_bn254, 32, 32, "bn128");
     };
 }
 
 macro_rules! impl_bls12_381 {
     () => {
-        impl_serde_for_curve!(
-            bls12_381,
-            Bls12_381,
-            ark_bls12_381,
-            "bls12_381",
-            48,
-            32,
-            "bls12_381"
-        );
+        impl_serde_for_curve!(bls12_381, Bls12_381, ark_bls12_381, 48, 32, "bls12_381");
     };
 }
 
+#[cfg(not(feature = "dangerous"))]
+macro_rules! point_check {
+    ($p: expr) => {{
+        if !$p.is_on_curve() {
+            Err(SerializationError::InvalidData)
+        } else if !$p.is_in_correct_subgroup_assuming_on_curve() {
+            Err(SerializationError::InvalidData)
+        } else {
+            Ok($p)
+        }
+    }};
+}
+
 macro_rules! impl_serde_for_curve {
-    ($mod_name: ident, $config: ident, $curve: ident, $name: expr, $field_size: expr, $scalar_field_size: expr, $circom_name: expr) => {
+    ($mod_name: ident, $config: ident, $curve: ident, $field_size: expr, $scalar_field_size: expr, $circom_name: expr) => {
 
 mod $mod_name {
 
@@ -43,6 +47,32 @@ mod $mod_name {
     use serde::ser::SerializeSeq;
 
     use super::*;
+
+    #[cfg(feature = "dangerous")]
+    #[inline(always)]
+    fn test_on_curve_g1(p: $curve::G1Affine) -> Result<$curve::G1Affine, SerializationError> {
+        Ok(p)
+    }
+
+    #[cfg(feature = "dangerous")]
+    #[inline(always)]
+    fn test_on_curve_g2(p: $curve::G2Affine) -> Result<$curve::G2Affine, SerializationError> {
+        Ok(p)
+    }
+
+    #[cfg(not(feature = "dangerous"))]
+    #[inline(always)]
+    fn test_on_curve_g1(p: $curve::G1Affine) -> Result<$curve::G1Affine, SerializationError> {
+        point_check!(p)
+    }
+
+
+    #[cfg(not(feature = "dangerous"))]
+    #[inline(always)]
+    fn test_on_curve_g2(p: $curve::G2Affine) -> Result<$curve::G2Affine, SerializationError> {
+        point_check!(p)
+    }
+
         impl CircomArkworksPrimeFieldBridge for Fr {
             const SERIALIZED_BYTE_SIZE: usize = $scalar_field_size;
             #[inline]
@@ -113,16 +143,7 @@ mod $mod_name {
                 if x.is_zero() && y.is_zero() {
                     return Ok(Self::G1Affine::zero());
                 }
-
-                let p = Self::G1Affine::new_unchecked(x, y);
-
-                if !p.is_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                if !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                Ok(p)
+                test_on_curve_g1(Self::G1Affine::new_unchecked(x, y))
             }
 
             fn g2_from_reader(mut reader: impl Read) -> IoResult<Self::G2Affine> {
@@ -146,15 +167,7 @@ mod $mod_name {
                 if x.is_zero() && y.is_zero() {
                     return Ok(Self::G2Affine::zero());
                 }
-
-                let p = Self::G2Affine::new_unchecked(x, y);
-                if !p.is_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                if !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                Ok(p)
+                test_on_curve_g2(Self::G2Affine::new_unchecked(x, y))
             }
 
             fn g1_from_strings_projective(x: &str, y: &str, z: &str) -> IoResult<Self::G1Affine> {
@@ -165,13 +178,7 @@ mod $mod_name {
                 if p.is_zero() {
                     return Ok(p);
                 }
-                if !p.is_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                if !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                Ok(p)
+                test_on_curve_g1(p)
             }
 
             fn g1_to_strings_projective(p: &Self::G1Affine) -> Vec<String> {
@@ -205,13 +212,7 @@ mod $mod_name {
                 if p.is_zero() {
                     return Ok(p);
                 }
-                if !p.is_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                if !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(SerializationError::InvalidData);
-                }
-                Ok(p)
+                test_on_curve_g2(p)
             }
 
             fn serialize_g2<S: Serializer>(p: &Self::G2Affine, ser: S) -> Result<S::Ok, S::Error> {
@@ -269,7 +270,7 @@ mod $mod_name {
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str(
-                &format!("An element of {}::Fq12 represented as string with radix 10. Must be a sequence of form [[[String; 2]; 3]; 2].", $name),
+                &format!("An element of {}::Fq12 represented as string with radix 10. Must be a sequence of form [[[String; 2]; 3]; 2].", stringify!($mod_name)),
             )
         }
 
@@ -280,16 +281,16 @@ mod $mod_name {
             let x = seq
                 .next_element::<Vec<Vec<String>>>()?
                 .ok_or(de::Error::custom(
-                    &format!("expected elements target group in {} as sequence of sequences", $name),
+                    &format!("expected elements target group in {} as sequence of sequences", stringify!($mod_name)),
                 ))?;
             let y = seq
                 .next_element::<Vec<Vec<String>>>()?
                 .ok_or(de::Error::custom(
-                    &format!("expected elements target group in {} as sequence of sequences", $name),
+                    &format!("expected elements target group in {} as sequence of sequences", stringify!($mod_name)),
                 ))?;
             if x.len() != 3 || y.len() != 3 {
                 Err(de::Error::custom(
-                    &format!("need three elements for cubic extension field in {}", $name),
+                    &format!("need three elements for cubic extension field in {}", stringify!($mod_name)),
                 ))
             } else {
                 let c0 = cubic_extension_field_from_vec(x).map_err(|_| {
