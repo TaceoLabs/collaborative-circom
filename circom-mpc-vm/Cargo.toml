@@ -1,6 +1,6 @@
 [package]
 name = "circom-mpc-vm"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
@@ -13,10 +13,10 @@ readme.workspace = true
 [dependencies]
 ark-ec.workspace = true
 ark-ff.workspace = true
-collaborative-groth16 = { version = "0.2.1", path = "../collaborative-groth16" }
+collaborative-groth16 = { version = "0.3.0", path = "../collaborative-groth16" }
 eyre.workspace = true
 itertools.workspace = true
-mpc-core = { version = "0.2.1", path = "../mpc-core" }
+mpc-core = { version = "0.3.0", path = "../mpc-core" }
 mpc-net = { workspace = true }
 tracing.workspace = true
 serde.workspace = true

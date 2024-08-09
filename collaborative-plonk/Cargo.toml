@@ -16,11 +16,11 @@ ark-ec = { workspace = true }
 ark-ff = { workspace = true }
 ark-poly = { workspace = true }
 ark-serialize = { workspace = true }
-circom-types = { version = "0.3.0", path = "../circom-types" }
-collaborative-groth16 = { version = "0.2.1", path = "../collaborative-groth16" }
+circom-types = { version = "0.4.0", path = "../circom-types" }
+collaborative-groth16 = { version = "0.3.0", path = "../collaborative-groth16" }
 eyre = { workspace = true }
 itertools = { workspace = true }
-mpc-core = { version = "0.2.1", path = "../mpc-core" }
+mpc-core = { version = "0.3.0", path = "../mpc-core" }
 num-traits = { workspace = true }
 sha3 = { workspace = true }
 thiserror = { workspace = true }

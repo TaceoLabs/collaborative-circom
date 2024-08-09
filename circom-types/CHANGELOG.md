@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/TaceoLabs/collaborative-circom/compare/circom-types-v0.3.0...circom-types-v0.4.0) (2024-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* circom-arkworks bridge trait now has a method to return name of curve
+* Adds a method to the ArkworksPairingBridge trait
+
+### Features
+
+* add deserialization of plonk circom types ([d1f0d4d](https://github.com/TaceoLabs/collaborative-circom/commit/d1f0d4dd5ac63e85523c139e573161bd2ff0061a))
+* circom-arkworks bridge trait now has a method to return name of curve ([b1e33dd](https://github.com/TaceoLabs/collaborative-circom/commit/b1e33dd52ccd422ce3197b670b83653c5eafecb9))
+* plonk support ([9b65797](https://github.com/TaceoLabs/collaborative-circom/commit/9b6579724f6f5ba4fc6af8a98d386b96818dc08b))
+
+
+### Bug Fixes
+
+* clippy 1.80 introduces a wrong warning ([a593904](https://github.com/TaceoLabs/collaborative-circom/commit/a593904c98686f442b747173d70fc3d2aa991566))
+
 ## [0.3.0](https://github.com/TaceoLabs/collaborative-circom/compare/circom-types-v0.2.0...circom-types-v0.3.0) (2024-07-10)
 
 

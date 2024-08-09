@@ -1,6 +1,6 @@
 [package]
 name = "collaborative-circom"
-version = "0.2.1"
+version = "0.3.0"
 
 publish.workspace = true
 authors.workspace = true
@@ -18,13 +18,13 @@ ark-bls12-381.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
 bincode.workspace = true
-circom-types = { version = "0.3.0", path = "../circom-types" }
-circom-mpc-compiler = { version = "0.3.0", path = "../circom-mpc-compiler" }
-circom-mpc-vm = { version = "0.2.0", path = "../circom-mpc-vm" }
+circom-types = { version = "0.4.0", path = "../circom-types" }
+circom-mpc-compiler = { version = "0.4.0", path = "../circom-mpc-compiler" }
+circom-mpc-vm = { version = "0.3.0", path = "../circom-mpc-vm" }
 clap.workspace = true
-collaborative-groth16 = { version = "0.2.1", path = "../collaborative-groth16" }
+collaborative-groth16 = { version = "0.3.0", path = "../collaborative-groth16" }
 color-eyre.workspace = true
-mpc-core = { version = "0.2.1", path = "../mpc-core" }
+mpc-core = { version = "0.3.0", path = "../mpc-core" }
 mpc-net.workspace = true
 num-bigint.workspace = true
 rand.workspace = true

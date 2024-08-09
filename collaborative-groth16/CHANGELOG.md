@@ -6,6 +6,32 @@
     * mpc-core bumped from 0.2.0 to 0.2.1
     * mpc-net bumped from 0.1.1 to 0.1.2
 
+## [0.3.0](https://github.com/TaceoLabs/collaborative-circom/compare/collaborative-groth16-v0.2.1...collaborative-groth16-v0.3.0) (2024-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* share_rep3 and share_shamir interfaces changed
+* Adds a method to the ArkworksPairingBridge trait
+
+### Features
+
+* add deserialization of plonk circom types ([d1f0d4d](https://github.com/TaceoLabs/collaborative-circom/commit/d1f0d4dd5ac63e85523c139e573161bd2ff0061a))
+* plonk support ([9b65797](https://github.com/TaceoLabs/collaborative-circom/commit/9b6579724f6f5ba4fc6af8a98d386b96818dc08b))
+
+
+### Code Refactoring
+
+* share_rep3 and share_shamir interfaces changed ([5e7420f](https://github.com/TaceoLabs/collaborative-circom/commit/5e7420f95a46466304c2ab80de2069c2feb3432d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * circom-types bumped from 0.3.0 to 0.4.0
+    * mpc-core bumped from 0.2.1 to 0.3.0
+
 ## [0.2.0](https://github.com/TaceoLabs/collaborative-circom/compare/collaborative-groth16-v0.1.0...collaborative-groth16-v0.2.0) (2024-07-09)
 
 

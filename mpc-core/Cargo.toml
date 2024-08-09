@@ -1,6 +1,6 @@
 [package]
 name = "mpc-core"
-version = "0.2.1"
+version = "0.3.0"
 publish.workspace = true
 authors.workspace = true
 edition.workspace = true
