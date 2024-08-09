@@ -23,6 +23,7 @@ circom-mpc-compiler = { version = "0.3.0", path = "../circom-mpc-compiler" }
 circom-mpc-vm = { version = "0.2.0", path = "../circom-mpc-vm" }
 clap.workspace = true
 collaborative-groth16 = { version = "0.2.1", path = "../collaborative-groth16" }
+collaborative-plonk = { version = "0.1.0", path = "../collaborative-plonk" }
 color-eyre.workspace = true
 mpc-core = { version = "0.2.1", path = "../mpc-core" }
 mpc-net.workspace = true

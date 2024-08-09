@@ -7,17 +7,17 @@ allow_leaky_logs = false
 [network]
 my_id = 2
 bind_addr = "0.0.0.0:10002"
-key_path = "data/key2.der"
+key_path = "../data/key2.der"
 [[network.parties]]
 id = 0
 # normally we would use DNS name here such as localhost, but localhost under windows is resolved to ::1, which causes problems since we bind to ipv4 above
 dns_name = "127.0.0.1:10000"
-cert_path = "data/cert0.der"
+cert_path = "../data/cert0.der"
 [[network.parties]]
 id = 1
 dns_name = "127.0.0.1:10001"
-cert_path = "data/cert1.der"
+cert_path = "../data/cert1.der"
 [[network.parties]]
 id = 2
 dns_name = "127.0.0.1:10002"
-cert_path = "data/cert2.der"
+cert_path = "../data/cert2.der"
