@@ -9,13 +9,15 @@ use circom_types::{
     groth16::{
         proof::JsonProof as Groth16JsonProof,
         verification_key::JsonVerificationKey as Groth16JsonVerificationKey, witness::Witness,
-        zkey::ZKey,
+        zkey::ZKey as Groth16ZKey,
     },
+    plonk::{JsonVerificationKey as PlonkJsonVerificationKey, PlonkProof, ZKey as PlonkZKey},
     traits::{CircomArkworksPairingBridge, CircomArkworksPrimeFieldBridge},
 };
 use clap::{Parser, Subcommand};
 use collaborative_circom::{file_utils, Config, MPCCurve, MPCProtocol, ProofSystem};
 use collaborative_groth16::groth16::{CollaborativeGroth16, SharedInput, SharedWitness};
+use collaborative_plonk::{plonk::Plonk, CollaborativePlonk};
 use color_eyre::eyre::{eyre, Context, ContextCompat};
 use mpc_core::{
     protocols::{
@@ -572,7 +574,7 @@ where
             tracing::info!("Witness successfully written to {}", out.display());
         }
         Commands::GenerateProof {
-            proofsystem: _,
+            proofsystem,
             config: _,
             witness,
             zkey,
@@ -598,60 +600,121 @@ where
 
             // parse Circom zkey file
             let zkey_file = File::open(zkey)?;
-            let (pk, matrices) = ZKey::<P>::from_reader(zkey_file).unwrap().split();
 
-            let (proof, public_input) = match protocol {
-                MPCProtocol::REP3 => {
-                    if t != 1 {
-                        return Err(eyre!("REP3 only allows the threshold to be 1"));
+            let public_input = match proofsystem {
+                ProofSystem::Groth16 => {
+                    let (pk, matrices) = Groth16ZKey::<P>::from_reader(zkey_file).unwrap().split();
+
+                    let (proof, public_input) = match protocol {
+                        MPCProtocol::REP3 => {
+                            if t != 1 {
+                                return Err(eyre!("REP3 only allows the threshold to be 1"));
+                            }
+
+                            let witness_share =
+                                collaborative_circom::parse_witness_share(witness_file)?;
+                            let public_input = witness_share.public_inputs.clone();
+                            // connect to network
+                            let net = Rep3MpcNet::new(network_config)?;
+
+                            // init MPC protocol
+                            let protocol = Rep3Protocol::new(net)?;
+
+                            let mut prover = CollaborativeGroth16::new(protocol);
+
+                            // execute prover in MPC
+                            let proof =
+                                prover.prove_with_matrices(&pk, &matrices, witness_share)?;
+                            (proof, public_input)
+                        }
+                        MPCProtocol::SHAMIR => {
+                            let witness_share =
+                                collaborative_circom::parse_witness_share(witness_file)?;
+                            let public_input = witness_share.public_inputs.clone();
+
+                            // connect to network
+                            let net = ShamirMpcNet::new(network_config)?;
+
+                            // init MPC protocol
+                            let protocol = ShamirProtocol::new(t, net)?;
+
+                            let mut prover = CollaborativeGroth16::new(protocol);
+
+                            // execute prover in MPC
+                            let proof =
+                                prover.prove_with_matrices(&pk, &matrices, witness_share)?;
+                            (proof, public_input)
+                        }
+                    };
+
+                    // write result to output file
+                    if let Some(out) = out {
+                        let out_file = BufWriter::new(
+                            std::fs::File::create(&out).context("while creating output file")?,
+                        );
+
+                        serde_json::to_writer(out_file, &Groth16JsonProof::<P>::from(proof))
+                            .context("while serializing proof to JSON file")?;
+                        tracing::info!("Wrote proof to file {}", out.display());
                     }
-                    let witness_share = collaborative_circom::parse_witness_share(witness_file)?;
-
-                    // parse public inputs
-                    let public_input = witness_share.public_inputs.clone();
-
-                    // connect to network
-                    let net = Rep3MpcNet::new(network_config)?;
-
-                    // init MPC protocol
-                    let protocol = Rep3Protocol::new(net)?;
-
-                    let mut prover = CollaborativeGroth16::new(protocol);
-
-                    // execute prover in MPC
-                    let proof = prover.prove_with_matrices(&pk, &matrices, witness_share)?;
-                    (proof, public_input)
+                    public_input
                 }
-                MPCProtocol::SHAMIR => {
-                    let witness_share = collaborative_circom::parse_witness_share(witness_file)?;
+                ProofSystem::Plonk => {
+                    let pk = PlonkZKey::<P>::from_reader(zkey_file).unwrap();
 
-                    // parse public inputs
-                    let public_input = witness_share.public_inputs.clone();
+                    let (proof, public_input) = match protocol {
+                        MPCProtocol::REP3 => {
+                            if t != 1 {
+                                return Err(eyre!("REP3 only allows the threshold to be 1"));
+                            }
 
-                    // connect to network
-                    let net = ShamirMpcNet::new(network_config)?;
+                            let witness_share =
+                                collaborative_circom::parse_witness_share(witness_file)?;
+                            let public_input = witness_share.public_inputs.clone();
+                            // connect to network
+                            let net = Rep3MpcNet::new(network_config)?;
 
-                    // init MPC protocol
-                    let protocol = ShamirProtocol::new(t, net)?;
+                            // init MPC protocol
+                            let protocol = Rep3Protocol::new(net)?;
 
-                    let mut prover = CollaborativeGroth16::new(protocol);
+                            let prover = CollaborativePlonk::new(protocol);
 
-                    // execute prover in MPC
-                    let proof = prover.prove_with_matrices(&pk, &matrices, witness_share)?;
-                    (proof, public_input)
+                            // execute prover in MPC
+                            let proof = prover.prove(pk, witness_share)?;
+                            (proof, public_input)
+                        }
+                        MPCProtocol::SHAMIR => {
+                            let witness_share =
+                                collaborative_circom::parse_witness_share(witness_file)?;
+                            let public_input = witness_share.public_inputs.clone();
+
+                            // connect to network
+                            let net = ShamirMpcNet::new(network_config)?;
+
+                            // init MPC protocol
+                            let protocol = ShamirProtocol::new(t, net)?;
+
+                            let prover = CollaborativePlonk::new(protocol);
+
+                            // execute prover in MPC
+                            let proof = prover.prove(pk, witness_share)?;
+                            (proof, public_input)
+                        }
+                    };
+
+                    // write result to output file
+                    if let Some(out) = out {
+                        let out_file = BufWriter::new(
+                            std::fs::File::create(&out).context("while creating output file")?,
+                        );
+
+                        serde_json::to_writer(out_file, &proof)
+                            .context("while serializing proof to JSON file")?;
+                        tracing::info!("Wrote proof to file {}", out.display());
+                    }
+                    public_input
                 }
             };
-
-            // write result to output file
-            if let Some(out) = out {
-                let out_file = BufWriter::new(
-                    std::fs::File::create(&out).context("while creating output file")?,
-                );
-
-                serde_json::to_writer(out_file, &Groth16JsonProof::<P>::from(proof))
-                    .context("while serializing proof to JSON file")?;
-                tracing::info!("Wrote proof to file {}", out.display());
-            }
 
             // write public input to output file
             if let Some(public_input_filename) = public_input_filename {
@@ -728,7 +791,16 @@ where
                     Groth16::<P>::verify_proof(&vk.into(), &proof, &public_inputs)
                         .context("while verifying proof")?
                 }
-                ProofSystem::Plonk => todo!(),
+                ProofSystem::Plonk => {
+                    let proof: PlonkProof<P> = serde_json::from_reader(proof_file)
+                        .context("while deserializing proof from file")?;
+
+                    let vk: PlonkJsonVerificationKey<P> = serde_json::from_reader(vk_file)
+                        .context("while deserializing verification key from file")?;
+
+                    Plonk::<P>::verify(&vk, &proof, &public_inputs)
+                        .context("while verifying proof")?
+                }
             };
 
             if res {
