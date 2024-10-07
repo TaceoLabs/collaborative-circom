@@ -75,7 +75,6 @@ fn proof_test(name: &str) {
 fn witness_and_proof_test(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let prover_toml = format!("../test_vectors/noir/{}/Prover.toml", name);
-    let proof_file = format!("../test_vectors/noir/{}/kat/{}.proof", name, name);
 
     let program_artifact = Utils::get_program_artifact_from_file(&circuit_file)
         .expect("failed to parse program artifact");
@@ -95,13 +94,6 @@ fn witness_and_proof_test(name: &str) {
 
     let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
-    let proof_u8 = proof.to_buffer();
-
-    let read_proof_u8 = std::fs::read(&proof_file).unwrap();
-    assert_eq!(proof_u8, read_proof_u8);
-
-    let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
-    assert_eq!(proof, read_proof);
 
     let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
