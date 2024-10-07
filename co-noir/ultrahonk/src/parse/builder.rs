@@ -1468,62 +1468,62 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         );
 
         // mock a poseidon external gate, with all zeros as input
-        self.blocks.poseidon_external.populate_wires(
+        self.blocks.poseidon2_external.populate_wires(
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
         );
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_m()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_1()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_2()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_3()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_c()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_arith()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_4()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_delta_range()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_lookup_type()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_elliptic()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_aux()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_poseidon2_external()
             .push(P::ScalarField::one());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_poseidon2_internal()
             .push(P::ScalarField::zero());
 
@@ -1532,7 +1532,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
 
         // dummy gate to be read into by previous poseidon external gate via shifts
         Self::create_dummy_gate(
-            &mut self.blocks.poseidon_external,
+            &mut self.blocks.poseidon2_external,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
@@ -1542,62 +1542,62 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         self.num_gates += 1; // necessary because create dummy gate cannot increment num_gates itself
 
         // mock a poseidon internal gate, with all zeros as input
-        self.blocks.poseidon_internal.populate_wires(
+        self.blocks.poseidon2_internal.populate_wires(
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
         );
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_m()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_1()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_2()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_3()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_c()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_arith()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_4()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_delta_range()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_lookup_type()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_elliptic()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_aux()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_poseidon2_external()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_poseidon2_internal()
             .push(P::ScalarField::one());
 
@@ -1606,7 +1606,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
 
         // dummy gate to be read into by previous poseidon internal gate via shifts
         Self::create_dummy_gate(
-            &mut self.blocks.poseidon_internal,
+            &mut self.blocks.poseidon2_internal,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,

@@ -132,8 +132,8 @@ pub struct UltraTraceBlocks<T: Default> {
     pub(crate) elliptic: T,
     pub(crate) aux: T,
     pub(crate) lookup: T,
-    pub(crate) poseidon_external: T,
-    pub(crate) poseidon_internal: T,
+    pub(crate) poseidon2_external: T,
+    pub(crate) poseidon2_internal: T,
 }
 
 impl<T: Default> UltraTraceBlocks<T> {
@@ -145,8 +145,8 @@ impl<T: Default> UltraTraceBlocks<T> {
             &self.elliptic,
             &self.aux,
             &self.lookup,
-            &self.poseidon_external,
-            &self.poseidon_internal,
+            &self.poseidon2_external,
+            &self.poseidon2_internal,
         ]
     }
 
@@ -190,8 +190,8 @@ impl<F: PrimeField> Default for UltraTraceBlocks<UltraTraceBlock<F>> {
             elliptic: Default::default(),
             aux: Default::default(),
             lookup: Default::default(),
-            poseidon_external: Default::default(),
-            poseidon_internal: Default::default(),
+            poseidon2_external: Default::default(),
+            poseidon2_internal: Default::default(),
         };
 
         res.pub_inputs.is_pub_inputs = true;
