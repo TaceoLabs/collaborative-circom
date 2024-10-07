@@ -5,14 +5,17 @@ use crate::{
         verifier::DeciderVerifier,
         zeromorph::ZeroMorphVerifierOpeningClaim,
     },
-    prelude::{HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{HonkCurve, TranscriptFieldType},
+    transcript::{Transcript, TranscriptHasher},
     verifier::HonkVerifyResult,
     Utils, CONST_PROOF_SIZE_LOG_N,
 };
 use ark_ec::AffineRepr;
 use ark_ff::{Field, One, Zero};
 
-impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    DeciderVerifier<P, H>
+{
     pub fn get_g_shift_evaluations(
         evaluations: &ClaimedEvaluations<P::ScalarField>,
     ) -> PolyGShift<P::ScalarField> {
@@ -50,7 +53,7 @@ impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
 
     pub(crate) fn zeromorph_verify(
         &self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
         multivariate_challenge: Vec<P::ScalarField>,
     ) -> HonkVerifyResult<ZeroMorphVerifierOpeningClaim<P>> {

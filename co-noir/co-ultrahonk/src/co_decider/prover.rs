@@ -5,19 +5,25 @@ use crate::CoUtils;
 use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use std::marker::PhantomData;
 use ultrahonk::prelude::{
-    HonkCurve, HonkProof, HonkProofResult, ProverCrs, TranscriptFieldType, TranscriptType,
+    HonkCurve, HonkProof, HonkProofResult, ProverCrs, Transcript, TranscriptFieldType,
+    TranscriptHasher,
 };
 
-pub(crate) struct CoDecider<T, P: HonkCurve<TranscriptFieldType>>
-where
+pub(crate) struct CoDecider<
+    T,
+    P: HonkCurve<TranscriptFieldType>,
+    H: TranscriptHasher<TranscriptFieldType>,
+> where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
     pub(crate) driver: T,
     pub(super) memory: ProverMemory<T, P>,
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P>
+impl<T, P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    CoDecider<T, P, H>
 where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
@@ -26,13 +32,14 @@ where
             driver,
             memory,
             phantom_data: PhantomData,
+            phantom_hasher: PhantomData,
         }
     }
 
     fn compute_opening_proof(
         driver: &mut T,
         opening_claim: ZeroMorphOpeningClaim<T, P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         crs: &ProverCrs<P>,
     ) -> HonkProofResult<()> {
         let mut quotient = opening_claim.polynomial;
@@ -57,7 +64,7 @@ where
      */
     fn execute_relation_check_rounds(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
     ) -> HonkProofResult<SumcheckOutput<P::ScalarField>> {
         // This is just Sumcheck.prove
@@ -72,7 +79,7 @@ where
      * */
     fn execute_pcs_rounds(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
         crs: &ProverCrs<P>,
         sumcheck_output: SumcheckOutput<P::ScalarField>,
@@ -86,7 +93,7 @@ where
         mut self,
         circuit_size: u32,
         crs: &ProverCrs<P>,
-        mut transcript: TranscriptType,
+        mut transcript: Transcript<TranscriptFieldType, H>,
     ) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
         tracing::trace!("Decider prove");
 

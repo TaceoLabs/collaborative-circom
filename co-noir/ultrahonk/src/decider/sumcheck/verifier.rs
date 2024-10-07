@@ -5,17 +5,20 @@ use crate::{
         types::MAX_PARTIAL_RELATION_LENGTH,
         verifier::DeciderVerifier,
     },
-    prelude::{GateSeparatorPolynomial, HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{GateSeparatorPolynomial, HonkCurve, TranscriptFieldType},
+    transcript::{Transcript, TranscriptHasher},
     types::NUM_ALL_ENTITIES,
     verifier::HonkVerifyResult,
     Utils, CONST_PROOF_SIZE_LOG_N,
 };
 
 // Keep in mind, the UltraHonk protocol (UltraFlavor) does not per default have ZK
-impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    DeciderVerifier<P, H>
+{
     pub(crate) fn sumcheck_verify(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
     ) -> HonkVerifyResult<SumcheckVerifierOutput<P::ScalarField>> {
         tracing::trace!("Sumcheck verify");

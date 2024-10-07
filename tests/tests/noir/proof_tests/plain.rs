@@ -5,7 +5,7 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use co_acvm::solver::PlainCoSolver;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, PlainCoBuilder, ProvingKey, SharedBuilderVariable,
+    CoUltraHonk, HonkProof, PlainCoBuilder, Poseidon2Sponge, ProvingKey, SharedBuilderVariable,
     UltraCircuitVariable, UltraHonk, Utils,
 };
 use mpc_core::protocols::plain::PlainDriver;
@@ -58,7 +58,7 @@ fn proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::new(driver);
+    let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
     let proof_u8 = proof.to_buffer();
 
@@ -68,7 +68,7 @@ fn proof_test(name: &str) {
     let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
     assert_eq!(proof, read_proof);
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
@@ -93,7 +93,7 @@ fn witness_and_proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::new(driver);
+    let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
     let proof_u8 = proof.to_buffer();
 
@@ -103,7 +103,7 @@ fn witness_and_proof_test(name: &str) {
     let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
     assert_eq!(proof, read_proof);
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 

@@ -2,28 +2,33 @@ use super::{sumcheck::SumcheckOutput, types::ProverMemory, zeromorph::ZeroMorphO
 use crate::{
     honk_curve::HonkCurve,
     prover::HonkProofResult,
-    transcript::{TranscriptFieldType, TranscriptType},
+    transcript::{Transcript, TranscriptFieldType, TranscriptHasher},
     types::{HonkProof, ProverCrs},
     Utils,
 };
 use std::marker::PhantomData;
 
-pub(crate) struct Decider<P: HonkCurve<TranscriptFieldType>> {
+pub(crate) struct Decider<
+    P: HonkCurve<TranscriptFieldType>,
+    H: TranscriptHasher<TranscriptFieldType>,
+> {
     pub(super) memory: ProverMemory<P>,
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Decider<P, H> {
     pub(crate) fn new(memory: ProverMemory<P>) -> Self {
         Self {
             memory,
             phantom_data: PhantomData,
+            phantom_hasher: PhantomData,
         }
     }
 
     fn compute_opening_proof(
         opening_claim: ZeroMorphOpeningClaim<P::ScalarField>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         crs: &ProverCrs<P>,
     ) -> HonkProofResult<()> {
         let mut quotient = opening_claim.polynomial;
@@ -46,7 +51,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
      */
     fn execute_relation_check_rounds(
         &self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
     ) -> SumcheckOutput<P::ScalarField> {
         // This is just Sumcheck.prove
@@ -61,7 +66,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
      * */
     fn execute_pcs_rounds(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
         crs: &ProverCrs<P>,
         sumcheck_output: SumcheckOutput<P::ScalarField>,
@@ -75,7 +80,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
         mut self,
         circuit_size: u32,
         crs: &ProverCrs<P>,
-        mut transcript: TranscriptType,
+        mut transcript: Transcript<TranscriptFieldType, H>,
     ) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
         tracing::trace!("Decider prove");
 

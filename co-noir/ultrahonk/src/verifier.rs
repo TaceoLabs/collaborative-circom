@@ -1,21 +1,22 @@
 use crate::{
     decider::{types::VerifierMemory, verifier::DeciderVerifier},
     oink::verifier::OinkVerifier,
-    prelude::{HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{HonkCurve, TranscriptFieldType},
     prover::UltraHonk,
+    transcript::{Transcript, TranscriptHasher},
     types::{HonkProof, VerifyingKey},
 };
 
 pub(crate) type HonkVerifyResult<T> = std::result::Result<T, eyre::Report>;
 
-impl<P: HonkCurve<TranscriptFieldType>> UltraHonk<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> UltraHonk<P, H> {
     pub fn verify(
         honk_proof: HonkProof<TranscriptFieldType>,
         verifying_key: VerifyingKey<P>,
     ) -> HonkVerifyResult<bool> {
         tracing::trace!("UltraHonk verification");
 
-        let mut transcript = TranscriptType::new_verifier(honk_proof);
+        let mut transcript = Transcript::<TranscriptFieldType, H>::new_verifier(honk_proof);
 
         let oink_verifier = OinkVerifier::default();
         let oink_result = oink_verifier.verify(&verifying_key, &mut transcript)?;

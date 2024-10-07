@@ -7,7 +7,7 @@ use crate::{
     decider::{polynomial::Polynomial, types::ClaimedEvaluations, zeromorph::OpeningPair},
     honk_curve::HonkCurve,
     prover::HonkProofResult,
-    transcript::{TranscriptFieldType, TranscriptType},
+    transcript::{Transcript, TranscriptFieldType, TranscriptHasher},
     types::{AllEntities, ProverCrs},
     Utils, CONST_PROOF_SIZE_LOG_N, N_MAX,
 };
@@ -15,7 +15,7 @@ use ark_ec::Group;
 use ark_ff::{Field, One, Zero};
 use itertools::izip;
 
-impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Decider<P, H> {
     // /**
     //  * @brief Compute multivariate quotients q_k(X_0, ..., X_{k-1}) for f(X_0, ..., X_{n-1})
     //  * @details Starting from the coefficients of f, compute q_k inductively from k = n - 1, to k = 0.
@@ -304,7 +304,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
 
     fn compute_batched_polys(
         &self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         claimed_evaluations: AllEntities<P::ScalarField>,
         n: usize,
     ) -> (
@@ -363,7 +363,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
      */
     pub(crate) fn zeromorph_prove(
         &self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
         crs: &ProverCrs<P>,
         sumcheck_output: SumcheckOutput<P::ScalarField>,

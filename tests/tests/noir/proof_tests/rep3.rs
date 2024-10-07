@@ -4,8 +4,8 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use co_acvm::solver::Rep3CoSolver;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, ProvingKey, Rep3CoBuilder, SharedBuilderVariable, UltraCircuitBuilder,
-    UltraCircuitVariable, UltraHonk, Utils, VerifyingKey,
+    CoUltraHonk, HonkProof, Poseidon2Sponge, ProvingKey, Rep3CoBuilder, SharedBuilderVariable,
+    UltraCircuitBuilder, UltraCircuitVariable, UltraHonk, Utils, VerifyingKey,
 };
 use mpc_core::protocols::rep3::{
     network::Rep3Network, witness_extension_impl::Rep3VmType, Rep3Protocol,
@@ -89,7 +89,7 @@ fn proof_test(name: &str) {
             let driver = Rep3Protocol::new(net).unwrap();
             let proving_key = ProvingKey::create(&driver, builder, crs);
 
-            let prover = CoUltraHonk::new(driver);
+            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
             prover.prove(proving_key).unwrap()
         }));
     }
@@ -118,7 +118,7 @@ fn proof_test(name: &str) {
     let crs = VerifyingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
     let verifying_key = VerifyingKey::create(builder, crs).unwrap();
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
@@ -160,7 +160,7 @@ fn witness_and_proof_test(name: &str) {
             let driver = Rep3Protocol::new(net2).unwrap();
             let proving_key = ProvingKey::create(&driver, builder, prover_crs);
 
-            let prover = CoUltraHonk::new(driver);
+            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
             prover.prove(proving_key).unwrap()
         }));
     }
@@ -189,7 +189,7 @@ fn witness_and_proof_test(name: &str) {
     let crs = VerifyingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
     let verifying_key = VerifyingKey::create(builder, crs).unwrap();
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 

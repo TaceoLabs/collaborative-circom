@@ -2,7 +2,7 @@ use crate::{
     decider::{prover::Decider, types::ProverMemory},
     honk_curve::HonkCurve,
     oink::prover::Oink,
-    transcript::{TranscriptFieldType, TranscriptType},
+    transcript::{Transcript, TranscriptFieldType, TranscriptHasher},
     types::{HonkProof, ProvingKey},
     CONST_PROOF_SIZE_LOG_N,
 };
@@ -36,12 +36,15 @@ pub enum HonkProofError {
     IOError(#[from] io::Error),
 }
 
-pub struct UltraHonk<P: HonkCurve<TranscriptFieldType>> {
+pub struct UltraHonk<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> {
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> UltraHonk<P> {
-    pub(crate) fn generate_gate_challenges(transcript: &mut TranscriptType) -> Vec<P::ScalarField> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> UltraHonk<P, H> {
+    pub(crate) fn generate_gate_challenges(
+        transcript: &mut Transcript<TranscriptFieldType, H>,
+    ) -> Vec<P::ScalarField> {
         tracing::trace!("generate gate challenges");
 
         let mut gate_challenges: Vec<<P as Pairing>::ScalarField> =
@@ -57,7 +60,7 @@ impl<P: HonkCurve<TranscriptFieldType>> UltraHonk<P> {
     pub fn prove(proving_key: ProvingKey<P>) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
         tracing::trace!("UltraHonk prove");
 
-        let mut transcript = TranscriptType::new();
+        let mut transcript = Transcript::<TranscriptFieldType, H>::new();
 
         let oink = Oink::default();
         let oink_result = oink.prove(&proving_key, &mut transcript)?;

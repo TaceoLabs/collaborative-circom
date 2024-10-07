@@ -3,12 +3,12 @@ use crate::decider::sumcheck::round_prover::{SumcheckProverRound, SumcheckRoundO
 use crate::decider::sumcheck::SumcheckOutput;
 use crate::decider::types::{ClaimedEvaluations, GateSeparatorPolynomial, PartiallyEvaluatePolys};
 use crate::honk_curve::HonkCurve;
-use crate::transcript::{TranscriptFieldType, TranscriptType};
+use crate::transcript::{Transcript, TranscriptFieldType, TranscriptHasher};
 use crate::types::AllEntities;
 use crate::{Utils, CONST_PROOF_SIZE_LOG_N};
 
 // Keep in mind, the UltraHonk protocol (UltraFlavor) does not per default have ZK
-impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Decider<P, H> {
     pub(crate) fn partially_evaluate_init(
         partially_evaluated_poly: &mut PartiallyEvaluatePolys<P::ScalarField>,
         polys: &AllEntities<Vec<P::ScalarField>>,
@@ -41,7 +41,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
     }
 
     fn add_evals_to_transcript(
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         evaluations: &ClaimedEvaluations<P::ScalarField>,
     ) {
         tracing::trace!("Add Evals to Transcript");
@@ -69,7 +69,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Decider<P> {
 
     pub(crate) fn sumcheck_prove(
         &self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
     ) -> SumcheckOutput<P::ScalarField> {
         tracing::trace!("Sumcheck prove");

@@ -2,7 +2,7 @@ use crate::{
     honk_curve::HonkCurve,
     poseidon2::poseidon2_permutation::Poseidon2,
     prover::{HonkProofError, HonkProofResult},
-    sponge_hasher::{FieldSponge, TranscriptHasher},
+    sponge_hasher::{FieldHash, FieldSponge},
     types::HonkProof,
 };
 use ark_ec::AffineRepr;
@@ -12,8 +12,18 @@ use std::{collections::BTreeMap, ops::Index};
 pub type TranscriptFieldType = ark_bn254::Fr;
 pub type Poseidon2Sponge =
     FieldSponge<TranscriptFieldType, 4, 3, Poseidon2<TranscriptFieldType, 4, 5>>;
-pub type Poseidon2Transcript = Transcript<TranscriptFieldType, Poseidon2Sponge>;
-pub type TranscriptType = Poseidon2Transcript;
+
+pub trait TranscriptHasher<F: PrimeField> {
+    fn hash(buffer: Vec<F>) -> F;
+}
+
+impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T> + Default>
+    TranscriptHasher<F> for FieldSponge<F, T, R, H>
+{
+    fn hash(buffer: Vec<F>) -> F {
+        Self::hash_fixed_lenth::<1>(&buffer)[0]
+    }
+}
 
 pub struct Transcript<F, H>
 where

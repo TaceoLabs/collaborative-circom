@@ -2,7 +2,7 @@ use ark_bn254::Bn254;
 use co_ultrahonk::prelude::{CoUltraHonk, PlainCoBuilder, ProvingKey, SharedBuilderVariable};
 use mpc_core::protocols::plain::PlainDriver;
 use ultrahonk::{
-    prelude::{HonkProof, UltraHonk},
+    prelude::{HonkProof, Poseidon2Sponge, UltraHonk},
     Utils,
 };
 
@@ -27,7 +27,7 @@ fn poseidon_plaindriver_test() {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::new(driver);
+    let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
     let proof_u8 = proof.to_buffer();
 
@@ -37,6 +37,6 @@ fn poseidon_plaindriver_test() {
     let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
     assert_eq!(proof, read_proof);
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }

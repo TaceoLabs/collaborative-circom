@@ -1,7 +1,7 @@
 use crate::proof_tests::{CRS_PATH_G1, CRS_PATH_G2};
 use ark_bn254::Bn254;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, ProvingKey, ShamirCoBuilder, SharedBuilderVariable,
+    CoUltraHonk, HonkProof, Poseidon2Sponge, ProvingKey, ShamirCoBuilder, SharedBuilderVariable,
     UltraCircuitBuilder, UltraCircuitVariable, UltraHonk, Utils, VerifyingKey,
 };
 use mpc_core::protocols::shamir::ShamirProtocol;
@@ -45,7 +45,7 @@ fn proof_test(name: &str, num_parties: usize, threshold: usize) {
             let driver = ShamirProtocol::new(threshold, net).unwrap();
             let proving_key = ProvingKey::create(&driver, builder, prover_crs);
 
-            let prover = CoUltraHonk::new(driver);
+            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
             prover.prove(proving_key).unwrap()
         }));
     }
@@ -74,7 +74,7 @@ fn proof_test(name: &str, num_parties: usize, threshold: usize) {
     let crs = VerifyingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
     let verifying_key = VerifyingKey::create(builder, crs).unwrap();
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 

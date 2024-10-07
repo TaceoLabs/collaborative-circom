@@ -16,12 +16,14 @@ use itertools::izip;
 use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use ultrahonk::{
     prelude::{
-        HonkCurve, HonkProofResult, Polynomial, ProverCrs, TranscriptFieldType, TranscriptType,
+        HonkCurve, HonkProofResult, Polynomial, ProverCrs, Transcript, TranscriptFieldType,
+        TranscriptHasher,
     },
     Utils,
 };
 
-impl<T, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P>
+impl<T, P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    CoDecider<T, P, H>
 where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
@@ -336,7 +338,7 @@ where
 
     fn compute_batched_polys(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         claimed_evaluations: AllEntities<P::ScalarField, P::ScalarField>,
         n: usize,
     ) -> (
@@ -438,7 +440,7 @@ where
      */
     pub(crate) fn zeromorph_prove(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
         crs: &ProverCrs<P>,
         sumcheck_output: SumcheckOutput<P::ScalarField>,

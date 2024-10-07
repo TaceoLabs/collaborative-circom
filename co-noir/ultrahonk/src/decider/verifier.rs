@@ -1,22 +1,30 @@
 use super::{types::VerifierMemory, zeromorph::ZeroMorphVerifierOpeningClaim};
 use crate::{
-    prelude::{HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{HonkCurve, TranscriptFieldType},
+    transcript::{Transcript, TranscriptHasher},
     verifier::HonkVerifyResult,
 };
 use ark_ec::AffineRepr;
 use ark_ff::One;
 use std::marker::PhantomData;
 
-pub(crate) struct DeciderVerifier<P: HonkCurve<TranscriptFieldType>> {
+pub(crate) struct DeciderVerifier<
+    P: HonkCurve<TranscriptFieldType>,
+    H: TranscriptHasher<TranscriptFieldType>,
+> {
     pub(super) memory: VerifierMemory<P>,
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    DeciderVerifier<P, H>
+{
     pub(crate) fn new(memory: VerifierMemory<P>) -> Self {
         Self {
             memory,
             phantom_data: PhantomData,
+            phantom_hasher: PhantomData,
         }
     }
 
@@ -26,7 +34,7 @@ impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
     // paper) as e(C + r*[W]_1 - v*[1]_1, [1]_2) * e(-[W]_1, [X]_2) = 1, or e(P_0, [1]_2) * e(P_1, [X]_2) = 1
     pub(crate) fn reduce_verify(
         opening_pair: ZeroMorphVerifierOpeningClaim<P>,
-        mut transcript: TranscriptType,
+        mut transcript: Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<(P::G1Affine, P::G1Affine)> {
         tracing::trace!("Reduce and verify opening pair");
 
@@ -60,7 +68,7 @@ impl<P: HonkCurve<TranscriptFieldType>> DeciderVerifier<P> {
         mut self,
         circuit_size: u32,
         crs: &P::G2Affine,
-        mut transcript: TranscriptType,
+        mut transcript: Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<bool> {
         tracing::trace!("Decider verification");
 

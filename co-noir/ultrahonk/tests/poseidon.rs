@@ -1,6 +1,6 @@
 use ark_bn254::Bn254;
 use ultrahonk::{
-    prelude::{HonkProof, ProvingKey, UltraCircuitBuilder, UltraHonk},
+    prelude::{HonkProof, Poseidon2Sponge, ProvingKey, UltraCircuitBuilder, UltraHonk},
     Utils,
 };
 
@@ -22,7 +22,7 @@ fn poseidon_test() {
 
     let (proving_key, verifying_key) = builder.create_keys(crs).unwrap();
 
-    let proof = UltraHonk::prove(proving_key).unwrap();
+    let proof = UltraHonk::<_, Poseidon2Sponge>::prove(proving_key).unwrap();
     let proof_u8 = proof.to_buffer();
 
     let read_proof_u8 = std::fs::read(PROOF_FILE).unwrap();
@@ -31,6 +31,6 @@ fn poseidon_test() {
     let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
     assert_eq!(proof, read_proof);
 
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }

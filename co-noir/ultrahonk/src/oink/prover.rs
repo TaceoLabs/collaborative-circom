@@ -21,7 +21,7 @@ use super::types::ProverMemory;
 use crate::{
     honk_curve::HonkCurve,
     prover::{HonkProofError, HonkProofResult},
-    transcript::{TranscriptFieldType, TranscriptType},
+    transcript::{Transcript, TranscriptFieldType, TranscriptHasher},
     types::ProvingKey,
     Utils,
 };
@@ -29,22 +29,27 @@ use ark_ff::{One, Zero};
 use itertools::izip;
 use std::marker::PhantomData;
 
-pub(crate) struct Oink<P: HonkCurve<TranscriptFieldType>> {
+pub(crate) struct Oink<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+{
     memory: ProverMemory<P>,
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> Default for Oink<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Default
+    for Oink<P, H>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Oink<P, H> {
     pub(crate) fn new() -> Self {
         Self {
             memory: ProverMemory::default(),
             phantom_data: PhantomData,
+            phantom_hasher: PhantomData,
         }
     }
 
@@ -315,7 +320,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     /// Generate relation separators alphas for sumcheck/combiner computation
     pub(crate) fn generate_alphas_round(
         alphas: &mut [P::ScalarField],
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) {
         tracing::trace!("generate alpha round");
 
@@ -326,7 +331,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
 
     /// Add circuit size public input size and public inputs to transcript
     fn execute_preamble_round(
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing preamble round");
@@ -358,7 +363,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     /// Compute first three wire commitments
     fn execute_wire_commitments_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing wire commitments round");
@@ -390,7 +395,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     /// Compute sorted list accumulator and commitment
     fn execute_sorted_list_accumulator_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing sorted list accumulator round");
@@ -434,7 +439,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     /// Fiat-Shamir: beta & gamma
     fn execute_log_derivative_inverse_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing log derivative inverse round");
@@ -458,7 +463,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     /// Compute grand product(s) and commitments.
     fn execute_grand_product_computation_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing grand product computation round");
@@ -481,7 +486,7 @@ impl<P: HonkCurve<TranscriptFieldType>> Oink<P> {
     pub(crate) fn prove(
         mut self,
         proving_key: &ProvingKey<P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkProofResult<ProverMemory<P>> {
         tracing::trace!("Oink prove");
 

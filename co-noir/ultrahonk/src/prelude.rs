@@ -13,8 +13,8 @@ pub use crate::parse::{
 pub use crate::poseidon2::poseidon2_bn254::POSEIDON2_BN254_T4_PARAMS;
 pub use crate::prover::HonkProofResult;
 pub use crate::prover::{HonkProofError, UltraHonk};
-pub use crate::transcript::TranscriptFieldType;
-pub use crate::transcript::TranscriptType;
+pub use crate::transcript::Poseidon2Sponge;
+pub use crate::transcript::{Transcript, TranscriptFieldType, TranscriptHasher};
 pub use crate::types::{Crs, ProverCrs};
 pub use crate::types::{HonkProof, ProvingKey, VerifyingKey};
 pub use crate::types::{PrecomputedEntities, ShiftedTableEntities, ShiftedWitnessEntities};

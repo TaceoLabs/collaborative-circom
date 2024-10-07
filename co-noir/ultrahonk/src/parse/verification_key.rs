@@ -3,7 +3,7 @@ use super::{
     types::{AggregationObjectPubInputIndices, AGGREGATION_OBJECT_SIZE},
 };
 use crate::{
-    prelude::{CrsParser, HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{CrsParser, HonkCurve, TranscriptFieldType},
     prover::{HonkProofError, HonkProofResult},
     types::{
         Crs, HonkProof, PrecomputedEntities, ProverCrs, ProvingKey, VerifyingKey,

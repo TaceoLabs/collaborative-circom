@@ -11,8 +11,9 @@ use co_noir::{
     VerifyConfig,
 };
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, ProvingKey, Rep3CoBuilder, ShamirCoBuilder, SharedBuilderVariable,
-    UltraCircuitBuilder, UltraHonk, Utils, VerifyingKey, VerifyingKeyBarretenberg,
+    CoUltraHonk, HonkProof, Poseidon2Sponge, ProvingKey, Rep3CoBuilder, ShamirCoBuilder,
+    SharedBuilderVariable, UltraCircuitBuilder, UltraHonk, Utils, VerifyingKey,
+    VerifyingKeyBarretenberg,
 };
 use color_eyre::eyre::{eyre, Context, ContextCompat};
 use mpc_core::protocols::{
@@ -490,7 +491,7 @@ fn run_generate_proof(config: GenerateProofConfig) -> color_eyre::Result<ExitCod
             // Get the proving key and prover
             let proving_key = ProvingKey::create(&protocol, builder, prover_crs);
             let public_input = proving_key.get_public_inputs();
-            let prover = CoUltraHonk::new(protocol);
+            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(protocol);
             let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
             tracing::info!(
                 "Party {}: Proving key generation took {} ms",
@@ -538,7 +539,7 @@ fn run_generate_proof(config: GenerateProofConfig) -> color_eyre::Result<ExitCod
             // Get the proving key and prover
             let proving_key = ProvingKey::create(&protocol, builder, prover_crs);
             let public_input = proving_key.get_public_inputs();
-            let prover = CoUltraHonk::new(protocol);
+            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(protocol);
             let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
             tracing::info!(
                 "Party {}: Proving key generation took {} ms",
@@ -672,7 +673,8 @@ fn run_verify(config: VerifyConfig) -> color_eyre::Result<ExitCode> {
 
     // The actual verifier
     let start = Instant::now();
-    let res = UltraHonk::verify(proof, vk).context("while verifying proof")?;
+    let res =
+        UltraHonk::<_, Poseidon2Sponge>::verify(proof, vk).context("while verifying proof")?;
     let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
     tracing::info!("Proof verification took {} ms", duration_ms);
 
