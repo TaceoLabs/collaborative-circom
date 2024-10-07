@@ -1,7 +1,19 @@
 use ark_ff::{One, PrimeField};
 use num_bigint::BigUint;
 
-pub(crate) trait FieldHash<F: PrimeField, const T: usize> {
+pub trait TranscriptHasher<F: PrimeField> {
+    fn hash(buffer: Vec<F>) -> F;
+}
+
+impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T> + Default>
+    TranscriptHasher<F> for FieldSponge<F, T, R, H>
+{
+    fn hash(buffer: Vec<F>) -> F {
+        Self::hash_fixed_lenth::<1>(&buffer)[0]
+    }
+}
+
+pub trait FieldHash<F: PrimeField, const T: usize> {
     #[allow(unused)]
     fn permutation(&self, input: &[F; T]) -> [F; T] {
         let mut state = *input;
@@ -17,7 +29,7 @@ enum SpongeMode {
     Squeeze,
 }
 
-pub(crate) struct FieldSponge<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> {
+pub struct FieldSponge<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> {
     state: [F; T],
     cache: [F; R],
     cache_size: usize,
@@ -25,8 +37,11 @@ pub(crate) struct FieldSponge<F: PrimeField, const T: usize, const R: usize, H: 
     hasher: H,
 }
 
-impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> FieldSponge<F, T, R, H> {
-    pub(crate) fn new(iv: F, hasher: H) -> Self {
+impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> FieldSponge<F, T, R, H>
+where
+    H: Default,
+{
+    pub(crate) fn new(iv: F) -> Self {
         assert!(R < T);
         let mut state = [F::zero(); T];
         state[R] = iv;
@@ -36,7 +51,7 @@ impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> FieldSpo
             cache: [F::zero(); R],
             cache_size: 0,
             mode: SpongeMode::Absorb,
-            hasher,
+            hasher: H::default(),
         }
     }
 
@@ -110,12 +125,11 @@ impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> FieldSpo
      */
     pub(crate) fn hash_internal<const OUT_LEN: usize, const IS_VAR_LEN: bool>(
         input: &[F],
-        hasher: H,
     ) -> [F; OUT_LEN] {
         let in_len = input.len();
         let iv = (BigUint::from(in_len) << 64) + OUT_LEN - BigUint::one();
 
-        let mut sponge = Self::new(F::from(iv), hasher);
+        let mut sponge = Self::new(F::from(iv));
         for input in input.iter() {
             sponge.absorb(input);
         }
@@ -134,15 +148,12 @@ impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T>> FieldSpo
         res
     }
 
-    pub(crate) fn hash_fixed_lenth<const OUT_LEN: usize>(input: &[F], hasher: H) -> [F; OUT_LEN] {
-        Self::hash_internal::<OUT_LEN, false>(input, hasher)
+    pub(crate) fn hash_fixed_lenth<const OUT_LEN: usize>(input: &[F]) -> [F; OUT_LEN] {
+        Self::hash_internal::<OUT_LEN, false>(input)
     }
 
     #[allow(unused)]
-    pub(crate) fn hash_variable_length<const OUT_LEN: usize>(
-        input: &[F],
-        hasher: H,
-    ) -> [F; OUT_LEN] {
-        Self::hash_internal::<OUT_LEN, true>(input, hasher)
+    pub(crate) fn hash_variable_length<const OUT_LEN: usize>(input: &[F]) -> [F; OUT_LEN] {
+        Self::hash_internal::<OUT_LEN, true>(input)
     }
 }

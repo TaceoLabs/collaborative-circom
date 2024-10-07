@@ -1,8 +1,8 @@
 use crate::{
     honk_curve::HonkCurve,
-    poseidon2::{poseidon2_params::Poseidon2Params, poseidon2_permutation::Poseidon2},
+    poseidon2::poseidon2_permutation::Poseidon2,
     prover::{HonkProofError, HonkProofResult},
-    sponge_hasher::FieldSponge,
+    sponge_hasher::{FieldSponge, TranscriptHasher},
     types::HonkProof,
 };
 use ark_ec::AffineRepr;
@@ -10,11 +10,15 @@ use ark_ff::{PrimeField, Zero};
 use std::{collections::BTreeMap, ops::Index};
 
 pub type TranscriptFieldType = ark_bn254::Fr;
-pub type TranscriptType = Poseidon2Transcript<TranscriptFieldType>;
+pub type Poseidon2Sponge =
+    FieldSponge<TranscriptFieldType, 4, 3, Poseidon2<TranscriptFieldType, 4, 5>>;
+pub type Poseidon2Transcript = Transcript<TranscriptFieldType, Poseidon2Sponge>;
+pub type TranscriptType = Poseidon2Transcript;
 
-pub struct Poseidon2Transcript<F>
+pub struct Transcript<F, H>
 where
     F: PrimeField,
+    H: TranscriptHasher<F>,
 {
     proof_data: Vec<F>,
     manifest: TranscriptManifest,
@@ -24,14 +28,25 @@ where
     is_first_challenge: bool,
     current_round_data: Vec<F>,
     previous_challenge: F,
-    hasher: Poseidon2<F, 4, 5>,
+    phantom_data: std::marker::PhantomData<H>,
 }
 
-impl<F> Poseidon2Transcript<F>
+impl<F, H> Default for Transcript<F, H>
 where
     F: PrimeField,
+    H: TranscriptHasher<F>,
 {
-    pub fn new(params: &'static Poseidon2Params<F, 4, 5>) -> Self {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F, H> Transcript<F, H>
+where
+    F: PrimeField,
+    H: TranscriptHasher<F>,
+{
+    pub fn new() -> Self {
         Self {
             proof_data: Default::default(),
             manifest: Default::default(),
@@ -41,11 +56,11 @@ where
             is_first_challenge: true,
             current_round_data: Default::default(),
             previous_challenge: Default::default(),
-            hasher: Poseidon2::new(params),
+            phantom_data: Default::default(),
         }
     }
 
-    pub fn new_verifier(params: &'static Poseidon2Params<F, 4, 5>, proof: HonkProof<F>) -> Self {
+    pub fn new_verifier(proof: HonkProof<F>) -> Self {
         Self {
             proof_data: proof.inner(),
             manifest: Default::default(),
@@ -55,7 +70,7 @@ where
             is_first_challenge: true,
             current_round_data: Default::default(),
             previous_challenge: Default::default(),
-            hasher: Poseidon2::new(params),
+            phantom_data: Default::default(),
         }
     }
 
@@ -237,7 +252,7 @@ where
         // Hash the full buffer with poseidon2, which is believed to be a collision resistant hash function and a random
         // oracle, removing the need to pre-hash to compress and then hash with a random oracle, as we previously did
         // with Pedersen and Blake3s.
-        let new_challenge = self.hash(full_buffer);
+        let new_challenge = H::hash(full_buffer);
 
         // update previous challenge buffer for next time we call this function
         self.previous_challenge = new_challenge;
@@ -262,10 +277,6 @@ where
         }
         self.round_number += 1;
         res
-    }
-
-    fn hash(&self, buffer: Vec<F>) -> F {
-        FieldSponge::<_, 4, 3, _>::hash_fixed_lenth::<1>(&buffer, self.hasher.to_owned())[0]
     }
 }
 

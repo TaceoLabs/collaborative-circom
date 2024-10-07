@@ -2,7 +2,6 @@ use crate::{
     decider::{prover::Decider, types::ProverMemory},
     honk_curve::HonkCurve,
     oink::prover::Oink,
-    poseidon2::poseidon2_bn254::POSEIDON2_BN254_T4_PARAMS,
     transcript::{TranscriptFieldType, TranscriptType},
     types::{HonkProof, ProvingKey},
     CONST_PROOF_SIZE_LOG_N,
@@ -58,7 +57,7 @@ impl<P: HonkCurve<TranscriptFieldType>> UltraHonk<P> {
     pub fn prove(proving_key: ProvingKey<P>) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
         tracing::trace!("UltraHonk prove");
 
-        let mut transcript = TranscriptType::new(&POSEIDON2_BN254_T4_PARAMS);
+        let mut transcript = TranscriptType::new();
 
         let oink = Oink::default();
         let oink_result = oink.prove(&proving_key, &mut transcript)?;

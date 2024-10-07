@@ -3,7 +3,7 @@ use crate::sponge_hasher::FieldHash;
 use ark_ff::PrimeField;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Poseidon2<F: PrimeField, const T: usize, const D: u64> {
+pub struct Poseidon2<F: PrimeField, const T: usize, const D: u64> {
     pub(crate) params: &'static Poseidon2Params<F, T, D>,
 }
 
@@ -162,6 +162,13 @@ impl<F: PrimeField, const T: usize, const D: u64> FieldHash<F, T> for Poseidon2<
             Self::sbox(state);
             Self::matmul_external(state);
         }
+    }
+}
+
+impl Default for Poseidon2<ark_bn254::Fr, 4, 5> {
+    fn default() -> Self {
+        let params = &crate::poseidon2::poseidon2_bn254::POSEIDON2_BN254_T4_PARAMS;
+        Poseidon2::new(params)
     }
 }
 

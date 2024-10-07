@@ -1,7 +1,7 @@
 use crate::{
     decider::{types::VerifierMemory, verifier::DeciderVerifier},
     oink::verifier::OinkVerifier,
-    prelude::{HonkCurve, TranscriptFieldType, TranscriptType, POSEIDON2_BN254_T4_PARAMS},
+    prelude::{HonkCurve, TranscriptFieldType, TranscriptType},
     prover::UltraHonk,
     types::{HonkProof, VerifyingKey},
 };
@@ -15,7 +15,7 @@ impl<P: HonkCurve<TranscriptFieldType>> UltraHonk<P> {
     ) -> HonkVerifyResult<bool> {
         tracing::trace!("UltraHonk verification");
 
-        let mut transcript = TranscriptType::new_verifier(&POSEIDON2_BN254_T4_PARAMS, honk_proof);
+        let mut transcript = TranscriptType::new_verifier(honk_proof);
 
         let oink_verifier = OinkVerifier::default();
         let oink_result = oink_verifier.verify(&verifying_key, &mut transcript)?;
