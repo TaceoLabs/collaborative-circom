@@ -6,7 +6,8 @@ use crate::{
     types::HonkProof,
 };
 use ark_ec::AffineRepr;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
+use num_bigint::BigUint;
 use std::{collections::BTreeMap, ops::Index};
 
 pub type TranscriptFieldType = ark_bn254::Fr;
@@ -237,7 +238,24 @@ where
         Ok(res)
     }
 
-    pub(super) fn get_next_challenge_buffer(&mut self) -> F {
+    fn split_challenge(challenge: F) -> [F; 2] {
+        // match the parameter used in stdlib, which is derived from cycle_scalar (is 128)
+        const LO_BITS: usize = 128;
+        let biguint: BigUint = challenge.into();
+
+        let lower_mask = (BigUint::one() << LO_BITS) - BigUint::one();
+        let lo = &biguint & lower_mask;
+        let hi = biguint >> LO_BITS;
+
+        let lo = F::from(lo);
+        let hi = F::from(hi);
+
+        [lo, hi]
+    }
+
+    fn get_next_duplex_challenge_buffer(&mut self, num_challenges: usize) -> [F; 2] {
+        // challenges need at least 110 bits in them to match the presumed security parameter of the BN254 curve.
+        assert!(num_challenges <= 2);
         // Prevent challenge generation if this is the first challenge we're generating,
         // AND nothing was sent by the prover.
         if self.is_first_challenge {
@@ -263,28 +281,42 @@ where
         // oracle, removing the need to pre-hash to compress and then hash with a random oracle, as we previously did
         // with Pedersen and Blake3s.
         let new_challenge = H::hash(full_buffer);
+        let new_challenges = Self::split_challenge(new_challenge);
 
         // update previous challenge buffer for next time we call this function
         self.previous_challenge = new_challenge;
-        new_challenge
+        new_challenges
     }
 
     pub fn get_challenge<P: HonkCurve<F>>(&mut self, label: String) -> P::ScalarField {
         self.manifest.add_challenge(self.round_number, &[label]);
-        let challenge = self.get_next_challenge_buffer();
+        let challenge = self.get_next_duplex_challenge_buffer(1)[0];
         let res = P::convert_destinationfield_to_scalarfield(&challenge);
         self.round_number += 1;
         res
     }
 
     pub fn get_challenges<P: HonkCurve<F>>(&mut self, labels: &[String]) -> Vec<P::ScalarField> {
+        let num_challenges = labels.len();
         self.manifest.add_challenge(self.round_number, labels);
-        let mut res = Vec::with_capacity(labels.len());
-        for _ in 0..labels.len() {
-            let challenge = self.get_next_challenge_buffer();
-            let res_ = P::convert_destinationfield_to_scalarfield(&challenge);
-            res.push(res_);
+
+        let mut res = Vec::with_capacity(num_challenges);
+        for _ in 0..num_challenges >> 1 {
+            let challenge_buffer = self.get_next_duplex_challenge_buffer(2);
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[0],
+            ));
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[1],
+            ));
         }
+        if num_challenges & 1 == 1 {
+            let challenge_buffer = self.get_next_duplex_challenge_buffer(1);
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[0],
+            ));
+        }
+
         self.round_number += 1;
         res
     }

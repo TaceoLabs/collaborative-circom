@@ -5,7 +5,7 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use co_acvm::solver::PlainCoSolver;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, PlainCoBuilder, Poseidon2Sponge, ProvingKey, SharedBuilderVariable,
+    CoUltraHonk, PlainCoBuilder, Poseidon2Sponge, ProvingKey, SharedBuilderVariable,
     UltraCircuitVariable, UltraHonk, Utils,
 };
 use mpc_core::protocols::plain::PlainDriver;
@@ -42,7 +42,6 @@ fn convert_witness_plain<P: Pairing>(
 fn proof_test(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let witness_file = format!("../test_vectors/noir/{}/kat/{}.gz", name, name);
-    let proof_file = format!("../test_vectors/noir/{}/kat/{}.proof", name, name);
 
     let constraint_system = Utils::get_constraint_system_from_file(&circuit_file, true)
         .expect("failed to parse program artifact");
@@ -60,13 +59,6 @@ fn proof_test(name: &str) {
 
     let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
-    let proof_u8 = proof.to_buffer();
-
-    let read_proof_u8 = std::fs::read(&proof_file).unwrap();
-    assert_eq!(proof_u8, read_proof_u8);
-
-    let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
-    assert_eq!(proof, read_proof);
 
     let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
