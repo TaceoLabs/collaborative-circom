@@ -22,13 +22,13 @@ use crate::{types::ProvingKey, CoUtils, FieldShare};
 use ark_ff::One;
 use itertools::izip;
 use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
-use std::marker::PhantomData;
+use std::{array, marker::PhantomData};
 use ultrahonk::{
     prelude::{
         HonkCurve, HonkProofError, HonkProofResult, Polynomial, Transcript, TranscriptFieldType,
         TranscriptHasher,
     },
-    Utils,
+    Utils, NUM_ALPHAS,
 };
 
 pub(crate) struct CoOink<
@@ -229,6 +229,8 @@ where
             self.memory.lookup_inverses[i] = self.driver.mul_with_public(&write_term, &read_term);
         }
 
+        // Compute inverse polynomial I in place by inverting the product at each row
+        // Note: zeroes are ignored as they are not used anyway
         CoUtils::batch_invert::<T, P>(self.driver, self.memory.lookup_inverses.as_mut())?;
         Ok(())
     }
@@ -408,10 +410,11 @@ where
     fn generate_alphas_round(&mut self, transcript: &mut Transcript<TranscriptFieldType, H>) {
         tracing::trace!("generate alpha round");
 
-        for idx in 0..self.memory.challenges.alphas.len() {
-            self.memory.challenges.alphas[idx] =
-                transcript.get_challenge::<P>(format!("alpha_{}", idx));
-        }
+        let args: [String; NUM_ALPHAS] = array::from_fn(|i| format!("alpha_{}", i));
+        self.memory
+            .challenges
+            .alphas
+            .copy_from_slice(&transcript.get_challenges::<P>(&args));
     }
 
     // Add circuit size public input size and public inputs to transcript

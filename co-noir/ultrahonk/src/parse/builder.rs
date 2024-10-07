@@ -711,6 +711,11 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
             has_valid_witness_assignments,
             &mut gate_counter,
         );
+        self.process_avm_recursion_constraints(
+            &constraint_system,
+            has_valid_witness_assignments,
+            &mut gate_counter,
+        );
 
         // If the circuit does not itself contain honk recursion constraints but is going to be
         // proven with honk then recursively verified, add a default aggregation object
@@ -751,6 +756,23 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
             {
                 todo!("Honk recursion");
             }
+        }
+    }
+
+    fn process_avm_recursion_constraints(
+        &mut self,
+        constraint_system: &AcirFormat<P::ScalarField>,
+        has_valid_witness_assignments: bool,
+        gate_counter: &mut GateCounter,
+    ) {
+        let current_aggregation_object = self.init_default_agg_obj_indices();
+
+        for (i, constraint) in constraint_system
+            .avm_recursion_constraints
+            .iter()
+            .enumerate()
+        {
+            todo!("avm recursion");
         }
     }
 
@@ -1757,7 +1779,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         //  */
         if self.circuit_finalized {
             // Gates added after first call to finalize will not be processed since finalization is only performed once
-            tracing::info!("WARNING: Redudant call to finalize_circuit(). Is this intentional?");
+            tracing::info!("WARNING: Redundant call to finalize_circuit(). Is this intentional?");
         } else {
             self.process_non_native_field_multiplications();
             self.process_rom_arrays();

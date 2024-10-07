@@ -113,6 +113,7 @@ pub(crate) struct AcirFormatOriginalOpcodeIndices {
     // pub(crate)ec_add_constraints: Vec<usize>,
     // pub(crate)recursion_constraints: Vec<usize>,
     // pub(crate)honk_recursion_constraints: Vec<usize>,
+    // pub(crate)avm_recursion_constraints: Vec<usize>,
     // pub(crate)ivc_recursion_constraints: Vec<usize>,
     // pub(crate)bigint_from_le_bytes_constraints: Vec<usize>,
     // pub(crate)bigint_to_le_bytes_constraints: Vec<usize>,
@@ -311,8 +312,12 @@ impl<F: PrimeField> UltraTraceBlock<F> {
         self.w_4().push(idx4);
     }
 
-    pub fn get_fixed_size(&self) -> u32 {
-        self.fixed_size
+    pub fn get_fixed_size(&self, is_structured: bool) -> u32 {
+        if is_structured {
+            self.fixed_size
+        } else {
+            self.len() as u32
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -1201,12 +1206,8 @@ impl<'a, P: Pairing> TraceData<'a, P> {
             }
 
             // If the trace is structured, we populate the data from the next block at a fixed block size offset
-            if is_structured {
-                offset += block.get_fixed_size() as usize;
-            } else {
-                // otherwise, the next block starts immediately following the previous one
-                offset += block_size;
-            }
+            // otherwise, the next block starts immediately following the previous one
+            offset += block.get_fixed_size(is_structured) as usize;
         }
     }
 }

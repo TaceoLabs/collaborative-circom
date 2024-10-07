@@ -23,11 +23,11 @@ use crate::{
     prover::{HonkProofError, HonkProofResult},
     transcript::{Transcript, TranscriptFieldType, TranscriptHasher},
     types::ProvingKey,
-    Utils,
+    Utils, NUM_ALPHAS,
 };
 use ark_ff::{One, Zero};
 use itertools::izip;
-use std::marker::PhantomData;
+use std::{array, marker::PhantomData};
 
 pub(crate) struct Oink<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
 {
@@ -179,6 +179,8 @@ impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>
             self.memory.lookup_inverses[i] = read_term * write_term;
         }
 
+        // Compute inverse polynomial I in place by inverting the product at each row
+        // Note: zeroes are ignored as they are not used anyway
         Utils::batch_invert(self.memory.lookup_inverses.as_mut());
     }
 
@@ -319,14 +321,13 @@ impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>
 
     /// Generate relation separators alphas for sumcheck/combiner computation
     pub(crate) fn generate_alphas_round(
-        alphas: &mut [P::ScalarField],
+        alphas: &mut [P::ScalarField; NUM_ALPHAS],
         transcript: &mut Transcript<TranscriptFieldType, H>,
     ) {
         tracing::trace!("generate alpha round");
 
-        for (idx, alpha) in alphas.iter_mut().enumerate() {
-            *alpha = transcript.get_challenge::<P>(format!("alpha_{}", idx));
-        }
+        let args: [String; NUM_ALPHAS] = array::from_fn(|i| format!("alpha_{}", i));
+        alphas.copy_from_slice(&transcript.get_challenges::<P>(&args));
     }
 
     /// Add circuit size public input size and public inputs to transcript

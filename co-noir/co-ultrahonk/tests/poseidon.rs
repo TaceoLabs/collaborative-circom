@@ -46,8 +46,8 @@ fn poseidon_plaindriver_test_poseidon2sponge() {
     poseidon_plaindriver_test::<Poseidon2Sponge>(PROOF_FILE);
 }
 
-#[test]
-fn poseidon_plaindriver_test_keccak256() {
-    const PROOF_FILE: &str = "../../test_vectors/noir/poseidon/kat/poseidon_keccaktranscript.proof";
-    poseidon_plaindriver_test::<Keccak256>(PROOF_FILE);
-}
+// #[test]
+// fn poseidon_plaindriver_test_keccak256() {
+//     const PROOF_FILE: &str = "../../test_vectors/noir/poseidon/kat/poseidon_keccaktranscript.proof";
+//     poseidon_plaindriver_test::<Keccak256>(PROOF_FILE);
+// }

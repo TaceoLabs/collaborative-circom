@@ -51,9 +51,10 @@ impl<P: Pairing> ProvingKey<P> {
         );
 
         // Construct the public inputs array
-        let public_wires_src = proving_key.polynomials.witness.w_r();
-
-        for input in public_wires_src
+        for input in proving_key
+            .polynomials
+            .witness
+            .w_r()
             .iter()
             .skip(proving_key.pub_inputs_offset as usize)
             .take(proving_key.num_public_inputs as usize)

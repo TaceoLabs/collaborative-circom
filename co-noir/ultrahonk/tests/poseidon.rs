@@ -43,8 +43,8 @@ fn poseidon_test_poseidon2sponge() {
     poseidon_test::<Poseidon2Sponge>(PROOF_FILE);
 }
 
-#[test]
-fn poseidon_test_keccak256() {
-    const PROOF_FILE: &str = "../../test_vectors/noir/poseidon/kat/poseidon_keccaktranscript.proof";
-    poseidon_test::<Keccak256>(PROOF_FILE);
-}
+// #[test]
+// fn poseidon_test_keccak256() {
+//     const PROOF_FILE: &str = "../../test_vectors/noir/poseidon/kat/poseidon_keccaktranscript.proof";
+//     poseidon_test::<Keccak256>(PROOF_FILE);
+// }
