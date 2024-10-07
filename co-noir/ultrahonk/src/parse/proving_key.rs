@@ -17,8 +17,7 @@ impl<P: Pairing> ProvingKey<P> {
     // We ignore the TraceStructure for now (it is None in barretenberg for UltraHonk)
     pub fn create(mut circuit: UltraCircuitBuilder<P>, crs: ProverCrs<P>) -> Self {
         tracing::info!("ProvingKey create");
-        circuit.add_gates_to_ensure_all_polys_are_non_zero();
-        circuit.finalize_circuit();
+        circuit.finalize_circuit(true);
 
         let dyadic_circuit_size = circuit.compute_dyadic_size();
         let mut proving_key = Self::new(dyadic_circuit_size, circuit.public_inputs.len(), crs);
@@ -51,9 +50,10 @@ impl<P: Pairing> ProvingKey<P> {
         );
 
         // Construct the public inputs array
-        let public_wires_src = proving_key.polynomials.witness.w_r();
-
-        for input in public_wires_src
+        for input in proving_key
+            .polynomials
+            .witness
+            .w_r()
             .iter()
             .skip(proving_key.pub_inputs_offset as usize)
             .take(proving_key.num_public_inputs as usize)

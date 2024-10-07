@@ -21,3 +21,6 @@ num-bigint.workspace = true
 tracing.workspace = true
 ultrahonk = { version = "0.1.0", path = "../ultrahonk" }
 serde.workspace = true
+
+[dev-dependencies]
+sha3.workspace = true

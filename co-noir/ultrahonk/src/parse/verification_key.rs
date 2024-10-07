@@ -3,13 +3,13 @@ use super::{
     types::{AggregationObjectPubInputIndices, AGGREGATION_OBJECT_SIZE},
 };
 use crate::{
-    prelude::{CrsParser, HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{CrsParser, HonkCurve, TranscriptFieldType},
     prover::{HonkProofError, HonkProofResult},
     types::{
         Crs, HonkProof, PrecomputedEntities, ProverCrs, ProvingKey, VerifyingKey,
         PRECOMPUTED_ENTITIES_SIZE,
     },
-    Utils,
+    Serialize, Utils,
 };
 use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::PrimeField;
@@ -85,11 +85,11 @@ impl<P: HonkCurve<TranscriptFieldType>> VerifyingKeyBarretenberg<P> {
         } else {
             let (x, y) = P::g1_affine_to_xy(el);
             if write_x_first {
-                HonkProof::<P::BaseField>::write_field_element(buf, x);
-                HonkProof::<P::BaseField>::write_field_element(buf, y);
+                Serialize::<P::BaseField>::write_field_element(buf, x);
+                Serialize::<P::BaseField>::write_field_element(buf, y);
             } else {
-                HonkProof::<P::BaseField>::write_field_element(buf, y);
-                HonkProof::<P::BaseField>::write_field_element(buf, x);
+                Serialize::<P::BaseField>::write_field_element(buf, y);
+                Serialize::<P::BaseField>::write_field_element(buf, x);
             }
         }
 
@@ -102,8 +102,8 @@ impl<P: HonkCurve<TranscriptFieldType>> VerifyingKeyBarretenberg<P> {
             return P::G1Affine::zero();
         }
 
-        let first = HonkProof::<P::BaseField>::read_field_element(buf, offset);
-        let second = HonkProof::<P::BaseField>::read_field_element(buf, offset);
+        let first = Serialize::<P::BaseField>::read_field_element(buf, offset);
+        let second = Serialize::<P::BaseField>::read_field_element(buf, offset);
 
         if read_x_first {
             P::g1_affine_from_xy(first, second)
@@ -115,14 +115,14 @@ impl<P: HonkCurve<TranscriptFieldType>> VerifyingKeyBarretenberg<P> {
     pub fn to_buffer(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(Self::SER_SIZE);
 
-        HonkProof::<P::ScalarField>::write_u64(&mut buffer, self.circuit_size);
-        HonkProof::<P::ScalarField>::write_u64(&mut buffer, self.log_circuit_size);
-        HonkProof::<P::ScalarField>::write_u64(&mut buffer, self.num_public_inputs);
-        HonkProof::<P::ScalarField>::write_u64(&mut buffer, self.pub_inputs_offset);
-        HonkProof::<P::ScalarField>::write_u8(&mut buffer, self.contains_recursive_proof as u8);
+        Serialize::<P::ScalarField>::write_u64(&mut buffer, self.circuit_size);
+        Serialize::<P::ScalarField>::write_u64(&mut buffer, self.log_circuit_size);
+        Serialize::<P::ScalarField>::write_u64(&mut buffer, self.num_public_inputs);
+        Serialize::<P::ScalarField>::write_u64(&mut buffer, self.pub_inputs_offset);
+        Serialize::<P::ScalarField>::write_u8(&mut buffer, self.contains_recursive_proof as u8);
 
         for val in self.recursive_proof_public_input_indices.iter() {
-            HonkProof::<P::ScalarField>::write_u32(&mut buffer, *val);
+            Serialize::<P::ScalarField>::write_u32(&mut buffer, *val);
         }
 
         for el in self.commitments.iter() {
@@ -142,14 +142,14 @@ impl<P: HonkCurve<TranscriptFieldType>> VerifyingKeyBarretenberg<P> {
         }
 
         // Read data
-        let circuit_size = HonkProof::<P::ScalarField>::read_u64(buf, &mut offset);
-        let log_circuit_size = HonkProof::<P::ScalarField>::read_u64(buf, &mut offset);
+        let circuit_size = Serialize::<P::ScalarField>::read_u64(buf, &mut offset);
+        let log_circuit_size = Serialize::<P::ScalarField>::read_u64(buf, &mut offset);
         if log_circuit_size != Utils::get_msb64(circuit_size) as u64 {
             return Err(HonkProofError::CorruptedKey);
         }
-        let num_public_inputs = HonkProof::<P::ScalarField>::read_u64(buf, &mut offset);
-        let pub_inputs_offset = HonkProof::<P::ScalarField>::read_u64(buf, &mut offset);
-        let contains_recursive_proof_u8 = HonkProof::<P::ScalarField>::read_u8(buf, &mut offset);
+        let num_public_inputs = Serialize::<P::ScalarField>::read_u64(buf, &mut offset);
+        let pub_inputs_offset = Serialize::<P::ScalarField>::read_u64(buf, &mut offset);
+        let contains_recursive_proof_u8 = Serialize::<P::ScalarField>::read_u8(buf, &mut offset);
         if contains_recursive_proof_u8 > 1 {
             return Err(HonkProofError::CorruptedKey);
         }
@@ -157,7 +157,7 @@ impl<P: HonkCurve<TranscriptFieldType>> VerifyingKeyBarretenberg<P> {
 
         let mut recursive_proof_public_input_indices = AggregationObjectPubInputIndices::default();
         for val in recursive_proof_public_input_indices.iter_mut() {
-            *val = HonkProof::<P::ScalarField>::read_u32(buf, &mut offset);
+            *val = Serialize::<P::ScalarField>::read_u32(buf, &mut offset);
         }
 
         let mut commitments = PrecomputedEntities::default();

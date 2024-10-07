@@ -22,24 +22,31 @@ use crate::{types::ProvingKey, CoUtils, FieldShare};
 use ark_ff::One;
 use itertools::izip;
 use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
-use std::marker::PhantomData;
+use std::{array, marker::PhantomData};
 use ultrahonk::{
     prelude::{
-        HonkCurve, HonkProofError, HonkProofResult, Polynomial, TranscriptFieldType, TranscriptType,
+        HonkCurve, HonkProofError, HonkProofResult, Polynomial, Transcript, TranscriptFieldType,
+        TranscriptHasher,
     },
-    Utils,
+    Utils, NUM_ALPHAS,
 };
 
-pub(crate) struct CoOink<'a, T, P: HonkCurve<TranscriptFieldType>>
-where
+pub(crate) struct CoOink<
+    'a,
+    T,
+    P: HonkCurve<TranscriptFieldType>,
+    H: TranscriptHasher<TranscriptFieldType>,
+> where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
     driver: &'a mut T,
     memory: ProverMemory<T, P>,
     phantom_data: PhantomData<P>,
+    phantom_hasher: PhantomData<H>,
 }
 
-impl<'a, T, P: HonkCurve<TranscriptFieldType>> CoOink<'a, T, P>
+impl<'a, T, P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    CoOink<'a, T, P, H>
 where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
@@ -48,6 +55,7 @@ where
             driver,
             memory: ProverMemory::default(),
             phantom_data: PhantomData,
+            phantom_hasher: PhantomData,
         }
     }
 
@@ -221,6 +229,8 @@ where
             self.memory.lookup_inverses[i] = self.driver.mul_with_public(&write_term, &read_term);
         }
 
+        // Compute inverse polynomial I in place by inverting the product at each row
+        // Note: zeroes are ignored as they are not used anyway
         CoUtils::batch_invert::<T, P>(self.driver, self.memory.lookup_inverses.as_mut())?;
         Ok(())
     }
@@ -397,18 +407,19 @@ where
     }
 
     // Generate relation separators alphas for sumcheck/combiner computation
-    fn generate_alphas_round(&mut self, transcript: &mut TranscriptType) {
+    fn generate_alphas_round(&mut self, transcript: &mut Transcript<TranscriptFieldType, H>) {
         tracing::trace!("generate alpha round");
 
-        for idx in 0..self.memory.challenges.alphas.len() {
-            self.memory.challenges.alphas[idx] =
-                transcript.get_challenge::<P>(format!("alpha_{}", idx));
-        }
+        let args: [String; NUM_ALPHAS] = array::from_fn(|i| format!("alpha_{}", i));
+        self.memory
+            .challenges
+            .alphas
+            .copy_from_slice(&transcript.get_challenges::<P>(&args));
     }
 
     // Add circuit size public input size and public inputs to transcript
     fn execute_preamble_round(
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<T, P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing preamble round");
@@ -440,7 +451,7 @@ where
     // Compute first three wire commitments
     fn execute_wire_commitments_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<T, P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing wire commitments round");
@@ -477,7 +488,7 @@ where
     // Compute sorted list accumulator and commitment
     fn execute_sorted_list_accumulator_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<T, P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing sorted list accumulator round");
@@ -522,7 +533,7 @@ where
     // Fiat-Shamir: beta & gamma
     fn execute_log_derivative_inverse_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<T, P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing log derivative inverse round");
@@ -542,7 +553,7 @@ where
     // Compute grand product(s) and commitments.
     fn execute_grand_product_computation_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         proving_key: &ProvingKey<T, P>,
     ) -> HonkProofResult<()> {
         tracing::trace!("executing grand product computation round");
@@ -569,7 +580,7 @@ where
     pub(crate) fn prove(
         mut self,
         proving_key: &ProvingKey<T, P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkProofResult<ProverMemory<T, P>> {
         tracing::trace!("Oink prove");
 

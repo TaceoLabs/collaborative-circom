@@ -711,6 +711,11 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
             has_valid_witness_assignments,
             &mut gate_counter,
         );
+        self.process_avm_recursion_constraints(
+            &constraint_system,
+            has_valid_witness_assignments,
+            &mut gate_counter,
+        );
 
         // If the circuit does not itself contain honk recursion constraints but is going to be
         // proven with honk then recursively verified, add a default aggregation object
@@ -751,6 +756,23 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
             {
                 todo!("Honk recursion");
             }
+        }
+    }
+
+    fn process_avm_recursion_constraints(
+        &mut self,
+        constraint_system: &AcirFormat<P::ScalarField>,
+        has_valid_witness_assignments: bool,
+        gate_counter: &mut GateCounter,
+    ) {
+        let current_aggregation_object = self.init_default_agg_obj_indices();
+
+        for (i, constraint) in constraint_system
+            .avm_recursion_constraints
+            .iter()
+            .enumerate()
+        {
+            todo!("avm recursion");
         }
     }
 
@@ -1446,62 +1468,62 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         );
 
         // mock a poseidon external gate, with all zeros as input
-        self.blocks.poseidon_external.populate_wires(
+        self.blocks.poseidon2_external.populate_wires(
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
         );
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_m()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_1()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_2()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_3()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_c()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_arith()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_4()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_delta_range()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_lookup_type()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_elliptic()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_aux()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_poseidon2_external()
             .push(P::ScalarField::one());
         self.blocks
-            .poseidon_external
+            .poseidon2_external
             .q_poseidon2_internal()
             .push(P::ScalarField::zero());
 
@@ -1510,7 +1532,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
 
         // dummy gate to be read into by previous poseidon external gate via shifts
         Self::create_dummy_gate(
-            &mut self.blocks.poseidon_external,
+            &mut self.blocks.poseidon2_external,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
@@ -1520,62 +1542,62 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         self.num_gates += 1; // necessary because create dummy gate cannot increment num_gates itself
 
         // mock a poseidon internal gate, with all zeros as input
-        self.blocks.poseidon_internal.populate_wires(
+        self.blocks.poseidon2_internal.populate_wires(
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
         );
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_m()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_1()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_2()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_3()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_c()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_arith()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_4()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_delta_range()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_lookup_type()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_elliptic()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_aux()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_poseidon2_external()
             .push(P::ScalarField::zero());
         self.blocks
-            .poseidon_internal
+            .poseidon2_internal
             .q_poseidon2_internal()
             .push(P::ScalarField::one());
 
@@ -1584,7 +1606,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
 
         // dummy gate to be read into by previous poseidon internal gate via shifts
         Self::create_dummy_gate(
-            &mut self.blocks.poseidon_internal,
+            &mut self.blocks.poseidon2_internal,
             self.zero_idx,
             self.zero_idx,
             self.zero_idx,
@@ -1729,7 +1751,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         read_data
     }
 
-    pub fn finalize_circuit(&mut self) {
+    pub fn finalize_circuit(&mut self, ensure_nonzero: bool) {
         // /**
         //  * First of all, add the gates related to ROM arrays and range lists.
         //  * Note that the total number of rows in an UltraPlonk program can be divided as following:
@@ -1757,8 +1779,12 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         //  */
         if self.circuit_finalized {
             // Gates added after first call to finalize will not be processed since finalization is only performed once
-            tracing::info!("WARNING: Redudant call to finalize_circuit(). Is this intentional?");
+            tracing::info!("WARNING: Redundant call to finalize_circuit(). Is this intentional?");
         } else {
+            if ensure_nonzero {
+                self.add_gates_to_ensure_all_polys_are_non_zero();
+            }
+
             self.process_non_native_field_multiplications();
             self.process_rom_arrays();
             self.process_ram_arrays();

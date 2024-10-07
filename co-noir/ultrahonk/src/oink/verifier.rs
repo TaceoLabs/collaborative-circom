@@ -1,36 +1,45 @@
-use eyre::Context;
-
 use super::types::VerifierMemory;
 use crate::{
     oink::prover::Oink,
-    prelude::{HonkCurve, TranscriptFieldType, TranscriptType},
+    prelude::{HonkCurve, TranscriptFieldType},
+    transcript::{Transcript, TranscriptHasher},
     types::VerifyingKey,
     verifier::HonkVerifyResult,
 };
+use eyre::Context;
 
-pub(crate) struct OinkVerifier<P: HonkCurve<TranscriptFieldType>> {
+pub(crate) struct OinkVerifier<
+    P: HonkCurve<TranscriptFieldType>,
+    H: TranscriptHasher<TranscriptFieldType>,
+> {
     memory: VerifierMemory<P>,
     pub public_inputs: Vec<P::ScalarField>,
+    phantom_hasher: std::marker::PhantomData<H>,
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> Default for OinkVerifier<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>> Default
+    for OinkVerifier<P, H>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
+impl<P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    OinkVerifier<P, H>
+{
     pub(crate) fn new() -> Self {
         Self {
             memory: VerifierMemory::default(),
             public_inputs: Default::default(),
+            phantom_hasher: Default::default(),
         }
     }
 
     fn execute_preamble_round(
         &mut self,
         verifying_key: &VerifyingKey<P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<()> {
         tracing::trace!("executing (verifying) preamble round");
 
@@ -69,7 +78,7 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
 
     fn execute_wire_commitments_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<()> {
         tracing::trace!("executing (verifying) wire commitments round");
 
@@ -86,7 +95,7 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
 
     fn execute_sorted_list_accumulator_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<()> {
         tracing::trace!("executing (verifying) sorted list accumulator round");
 
@@ -113,7 +122,7 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
 
     fn execute_log_derivative_inverse_round(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<()> {
         tracing::trace!("executing (verifying) log derivative inverse round");
 
@@ -131,10 +140,10 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
     fn execute_grand_product_computation_round(
         &mut self,
         verifying_key: &VerifyingKey<P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<()> {
         tracing::trace!("executing (verifying) grand product computation round");
-        self.memory.public_input_delta = Oink::<P>::compute_public_input_delta(
+        self.memory.public_input_delta = Oink::<P, H>::compute_public_input_delta(
             &self.memory.challenges.beta,
             &self.memory.challenges.gamma,
             &self.public_inputs,
@@ -149,7 +158,7 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
     pub(crate) fn verify(
         mut self,
         verifying_key: &VerifyingKey<P>,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
     ) -> HonkVerifyResult<VerifierMemory<P>> {
         tracing::trace!("Oink verify");
         self.execute_preamble_round(verifying_key, transcript)?;
@@ -157,7 +166,7 @@ impl<P: HonkCurve<TranscriptFieldType>> OinkVerifier<P> {
         self.execute_sorted_list_accumulator_round(transcript)?;
         self.execute_log_derivative_inverse_round(transcript)?;
         self.execute_grand_product_computation_round(verifying_key, transcript)?;
-        Oink::<P>::generate_alphas_round(&mut self.memory.challenges.alphas, transcript);
+        Oink::<P, H>::generate_alphas_round(&mut self.memory.challenges.alphas, transcript);
         Ok(self.memory)
     }
 }

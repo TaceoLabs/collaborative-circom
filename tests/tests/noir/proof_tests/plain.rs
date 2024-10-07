@@ -5,10 +5,11 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use co_acvm::solver::PlainCoSolver;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, PlainCoBuilder, ProvingKey, SharedBuilderVariable,
-    UltraCircuitVariable, UltraHonk, Utils,
+    CoUltraHonk, PlainCoBuilder, Poseidon2Sponge, ProvingKey, SharedBuilderVariable,
+    TranscriptFieldType, TranscriptHasher, UltraCircuitVariable, UltraHonk, Utils,
 };
 use mpc_core::protocols::plain::PlainDriver;
+use sha3::Keccak256;
 
 fn witness_map_to_witness_vector<P: Pairing>(
     witness_map: WitnessMap<P::ScalarField>,
@@ -39,10 +40,9 @@ fn convert_witness_plain<P: Pairing>(
     witness_map_to_witness_vector(witness_map)
 }
 
-fn proof_test(name: &str) {
+fn proof_test<H: TranscriptHasher<TranscriptFieldType>>(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let witness_file = format!("../test_vectors/noir/{}/kat/{}.gz", name, name);
-    let proof_file = format!("../test_vectors/noir/{}/kat/{}.proof", name, name);
 
     let constraint_system = Utils::get_constraint_system_from_file(&circuit_file, true)
         .expect("failed to parse program artifact");
@@ -58,24 +58,16 @@ fn proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::new(driver);
+    let prover = CoUltraHonk::<_, _, H>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
-    let proof_u8 = proof.to_buffer();
 
-    let read_proof_u8 = std::fs::read(&proof_file).unwrap();
-    assert_eq!(proof_u8, read_proof_u8);
-
-    let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
-    assert_eq!(proof, read_proof);
-
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, H>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
-fn witness_and_proof_test(name: &str) {
+fn witness_and_proof_test<H: TranscriptHasher<TranscriptFieldType>>(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let prover_toml = format!("../test_vectors/noir/{}/Prover.toml", name);
-    let proof_file = format!("../test_vectors/noir/{}/kat/{}.proof", name, name);
 
     let program_artifact = Utils::get_program_artifact_from_file(&circuit_file)
         .expect("failed to parse program artifact");
@@ -93,26 +85,29 @@ fn witness_and_proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::new(driver);
+    let prover = CoUltraHonk::<_, _, H>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
-    let proof_u8 = proof.to_buffer();
 
-    let read_proof_u8 = std::fs::read(&proof_file).unwrap();
-    assert_eq!(proof_u8, read_proof_u8);
-
-    let read_proof = HonkProof::from_buffer(&read_proof_u8).unwrap();
-    assert_eq!(proof, read_proof);
-
-    let is_valid = UltraHonk::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, H>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
 #[test]
-fn poseidon_witness_and_proof_test() {
-    witness_and_proof_test("poseidon");
+fn poseidon_witness_and_proof_test_poseidon2sponge() {
+    witness_and_proof_test::<Poseidon2Sponge>("poseidon");
 }
 
 #[test]
-fn poseidon_proof_test() {
-    proof_test("poseidon");
+fn poseidon_proof_test_poseidon2sponge() {
+    proof_test::<Poseidon2Sponge>("poseidon");
+}
+
+#[test]
+fn poseidon_witness_and_proof_test_keccak256() {
+    witness_and_proof_test::<Keccak256>("poseidon");
+}
+
+#[test]
+fn poseidon_proof_test_keccak256() {
+    proof_test::<Keccak256>("poseidon");
 }

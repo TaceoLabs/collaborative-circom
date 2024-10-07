@@ -1,20 +1,35 @@
 use crate::{
     honk_curve::HonkCurve,
-    poseidon2::{poseidon2_params::Poseidon2Params, poseidon2_permutation::Poseidon2},
+    poseidon2::poseidon2_permutation::Poseidon2,
     prover::{HonkProofError, HonkProofResult},
-    sponge_hasher::FieldSponge,
+    sponge_hasher::{FieldHash, FieldSponge},
     types::HonkProof,
 };
 use ark_ec::AffineRepr;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
+use num_bigint::BigUint;
 use std::{collections::BTreeMap, ops::Index};
 
 pub type TranscriptFieldType = ark_bn254::Fr;
-pub type TranscriptType = Poseidon2Transcript<TranscriptFieldType>;
+pub type Poseidon2Sponge =
+    FieldSponge<TranscriptFieldType, 4, 3, Poseidon2<TranscriptFieldType, 4, 5>>;
 
-pub struct Poseidon2Transcript<F>
+pub trait TranscriptHasher<F: PrimeField> {
+    fn hash(buffer: Vec<F>) -> F;
+}
+
+impl<F: PrimeField, const T: usize, const R: usize, H: FieldHash<F, T> + Default>
+    TranscriptHasher<F> for FieldSponge<F, T, R, H>
+{
+    fn hash(buffer: Vec<F>) -> F {
+        Self::hash_fixed_lenth::<1>(&buffer)[0]
+    }
+}
+
+pub struct Transcript<F, H>
 where
     F: PrimeField,
+    H: TranscriptHasher<F>,
 {
     proof_data: Vec<F>,
     manifest: TranscriptManifest,
@@ -24,14 +39,25 @@ where
     is_first_challenge: bool,
     current_round_data: Vec<F>,
     previous_challenge: F,
-    hasher: Poseidon2<F, 4, 5>,
+    phantom_data: std::marker::PhantomData<H>,
 }
 
-impl<F> Poseidon2Transcript<F>
+impl<F, H> Default for Transcript<F, H>
 where
     F: PrimeField,
+    H: TranscriptHasher<F>,
 {
-    pub fn new(params: &'static Poseidon2Params<F, 4, 5>) -> Self {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F, H> Transcript<F, H>
+where
+    F: PrimeField,
+    H: TranscriptHasher<F>,
+{
+    pub fn new() -> Self {
         Self {
             proof_data: Default::default(),
             manifest: Default::default(),
@@ -41,11 +67,11 @@ where
             is_first_challenge: true,
             current_round_data: Default::default(),
             previous_challenge: Default::default(),
-            hasher: Poseidon2::new(params),
+            phantom_data: Default::default(),
         }
     }
 
-    pub fn new_verifier(params: &'static Poseidon2Params<F, 4, 5>, proof: HonkProof<F>) -> Self {
+    pub fn new_verifier(proof: HonkProof<F>) -> Self {
         Self {
             proof_data: proof.inner(),
             manifest: Default::default(),
@@ -55,7 +81,7 @@ where
             is_first_challenge: true,
             current_round_data: Default::default(),
             previous_challenge: Default::default(),
-            hasher: Poseidon2::new(params),
+            phantom_data: Default::default(),
         }
     }
 
@@ -212,7 +238,24 @@ where
         Ok(res)
     }
 
-    pub(super) fn get_next_challenge_buffer(&mut self) -> F {
+    fn split_challenge(challenge: F) -> [F; 2] {
+        // match the parameter used in stdlib, which is derived from cycle_scalar (is 128)
+        const LO_BITS: usize = 128;
+        let biguint: BigUint = challenge.into();
+
+        let lower_mask = (BigUint::one() << LO_BITS) - BigUint::one();
+        let lo = &biguint & lower_mask;
+        let hi = biguint >> LO_BITS;
+
+        let lo = F::from(lo);
+        let hi = F::from(hi);
+
+        [lo, hi]
+    }
+
+    fn get_next_duplex_challenge_buffer(&mut self, num_challenges: usize) -> [F; 2] {
+        // challenges need at least 110 bits in them to match the presumed security parameter of the BN254 curve.
+        assert!(num_challenges <= 2);
         // Prevent challenge generation if this is the first challenge we're generating,
         // AND nothing was sent by the prover.
         if self.is_first_challenge {
@@ -237,35 +280,45 @@ where
         // Hash the full buffer with poseidon2, which is believed to be a collision resistant hash function and a random
         // oracle, removing the need to pre-hash to compress and then hash with a random oracle, as we previously did
         // with Pedersen and Blake3s.
-        let new_challenge = self.hash(full_buffer);
+        let new_challenge = H::hash(full_buffer);
+        let new_challenges = Self::split_challenge(new_challenge);
 
         // update previous challenge buffer for next time we call this function
         self.previous_challenge = new_challenge;
-        new_challenge
+        new_challenges
     }
 
     pub fn get_challenge<P: HonkCurve<F>>(&mut self, label: String) -> P::ScalarField {
         self.manifest.add_challenge(self.round_number, &[label]);
-        let challenge = self.get_next_challenge_buffer();
+        let challenge = self.get_next_duplex_challenge_buffer(1)[0];
         let res = P::convert_destinationfield_to_scalarfield(&challenge);
         self.round_number += 1;
         res
     }
 
     pub fn get_challenges<P: HonkCurve<F>>(&mut self, labels: &[String]) -> Vec<P::ScalarField> {
+        let num_challenges = labels.len();
         self.manifest.add_challenge(self.round_number, labels);
-        let mut res = Vec::with_capacity(labels.len());
-        for _ in 0..labels.len() {
-            let challenge = self.get_next_challenge_buffer();
-            let res_ = P::convert_destinationfield_to_scalarfield(&challenge);
-            res.push(res_);
+
+        let mut res = Vec::with_capacity(num_challenges);
+        for _ in 0..num_challenges >> 1 {
+            let challenge_buffer = self.get_next_duplex_challenge_buffer(2);
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[0],
+            ));
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[1],
+            ));
         }
+        if num_challenges & 1 == 1 {
+            let challenge_buffer = self.get_next_duplex_challenge_buffer(1);
+            res.push(P::convert_destinationfield_to_scalarfield(
+                &challenge_buffer[0],
+            ));
+        }
+
         self.round_number += 1;
         res
-    }
-
-    fn hash(&self, buffer: Vec<F>) -> F {
-        FieldSponge::<_, 4, 3, _>::hash_fixed_lenth::<1>(&buffer, self.hasher.to_owned())[0]
     }
 }
 

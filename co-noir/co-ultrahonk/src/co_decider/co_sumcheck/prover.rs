@@ -11,14 +11,15 @@ use crate::{
 use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use ultrahonk::{
     prelude::{
-        GateSeparatorPolynomial, HonkCurve, HonkProofResult, TranscriptFieldType, TranscriptType,
-        Univariate,
+        GateSeparatorPolynomial, HonkCurve, HonkProofResult, Transcript, TranscriptFieldType,
+        TranscriptHasher, Univariate,
     },
     Utils,
 };
 
 // Keep in mind, the UltraHonk protocol (UltraFlavor) does not per default have ZK
-impl<T, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P>
+impl<T, P: HonkCurve<TranscriptFieldType>, H: TranscriptHasher<TranscriptFieldType>>
+    CoDecider<T, P, H>
 where
     T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
 {
@@ -80,7 +81,7 @@ where
     }
 
     fn add_evals_to_transcript(
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         evaluations: &ClaimedEvaluations<P::ScalarField>,
     ) {
         tracing::trace!("Add Evals to Transcript");
@@ -123,7 +124,7 @@ where
 
     pub(crate) fn sumcheck_prove(
         &mut self,
-        transcript: &mut TranscriptType,
+        transcript: &mut Transcript<TranscriptFieldType, H>,
         circuit_size: u32,
     ) -> HonkProofResult<SumcheckOutput<P::ScalarField>> {
         tracing::trace!("Sumcheck prove");

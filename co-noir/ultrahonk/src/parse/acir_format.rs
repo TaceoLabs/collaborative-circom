@@ -46,6 +46,7 @@ pub struct AcirFormat<F: PrimeField> {
     //  std::vector<EcAdd> ec_add_constraints;
     pub(crate) recursion_constraints: Vec<RecursionConstraint>,
     pub(crate) honk_recursion_constraints: Vec<RecursionConstraint>,
+    pub(crate) avm_recursion_constraints: Vec<RecursionConstraint>,
     //  std::vector<RecursionConstraint> ivc_recursion_constraints;
     //  std::vector<BigIntFromLeBytes> bigint_from_le_bytes_constraints;
     //  std::vector<BigIntToLeBytes> bigint_to_le_bytes_constraints;
