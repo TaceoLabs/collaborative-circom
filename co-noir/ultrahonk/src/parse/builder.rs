@@ -1751,7 +1751,7 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
         read_data
     }
 
-    pub fn finalize_circuit(&mut self) {
+    pub fn finalize_circuit(&mut self, ensure_nonzero: bool) {
         // /**
         //  * First of all, add the gates related to ROM arrays and range lists.
         //  * Note that the total number of rows in an UltraPlonk program can be divided as following:
@@ -1781,6 +1781,10 @@ impl<P: Pairing, S: UltraCircuitVariable<P::ScalarField>> GenericUltraCircuitBui
             // Gates added after first call to finalize will not be processed since finalization is only performed once
             tracing::info!("WARNING: Redundant call to finalize_circuit(). Is this intentional?");
         } else {
+            if ensure_nonzero {
+                self.add_gates_to_ensure_all_polys_are_non_zero();
+            }
+
             self.process_non_native_field_multiplications();
             self.process_rom_arrays();
             self.process_ram_arrays();

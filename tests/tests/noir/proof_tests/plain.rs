@@ -6,9 +6,10 @@ use ark_ff::Zero;
 use co_acvm::solver::PlainCoSolver;
 use co_ultrahonk::prelude::{
     CoUltraHonk, PlainCoBuilder, Poseidon2Sponge, ProvingKey, SharedBuilderVariable,
-    UltraCircuitVariable, UltraHonk, Utils,
+    TranscriptFieldType, TranscriptHasher, UltraCircuitVariable, UltraHonk, Utils,
 };
 use mpc_core::protocols::plain::PlainDriver;
+use sha3::Keccak256;
 
 fn witness_map_to_witness_vector<P: Pairing>(
     witness_map: WitnessMap<P::ScalarField>,
@@ -39,7 +40,7 @@ fn convert_witness_plain<P: Pairing>(
     witness_map_to_witness_vector(witness_map)
 }
 
-fn proof_test(name: &str) {
+fn proof_test<H: TranscriptHasher<TranscriptFieldType>>(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let witness_file = format!("../test_vectors/noir/{}/kat/{}.gz", name, name);
 
@@ -57,14 +58,14 @@ fn proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
+    let prover = CoUltraHonk::<_, _, H>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
 
-    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, H>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
-fn witness_and_proof_test(name: &str) {
+fn witness_and_proof_test<H: TranscriptHasher<TranscriptFieldType>>(name: &str) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let prover_toml = format!("../test_vectors/noir/{}/Prover.toml", name);
 
@@ -84,19 +85,29 @@ fn witness_and_proof_test(name: &str) {
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
     let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
 
-    let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
+    let prover = CoUltraHonk::<_, _, H>::new(driver);
     let proof = prover.prove(proving_key).unwrap();
 
-    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, H>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
 #[test]
-fn poseidon_witness_and_proof_test() {
-    witness_and_proof_test("poseidon");
+fn poseidon_witness_and_proof_test_poseidon2sponge() {
+    witness_and_proof_test::<Poseidon2Sponge>("poseidon");
 }
 
 #[test]
-fn poseidon_proof_test() {
-    proof_test("poseidon");
+fn poseidon_proof_test_poseidon2sponge() {
+    proof_test::<Poseidon2Sponge>("poseidon");
+}
+
+#[test]
+fn poseidon_witness_and_proof_test_keccak256() {
+    witness_and_proof_test::<Keccak256>("poseidon");
+}
+
+#[test]
+fn poseidon_proof_test_keccak256() {
+    proof_test::<Keccak256>("poseidon");
 }

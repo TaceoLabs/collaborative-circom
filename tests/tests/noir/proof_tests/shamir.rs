@@ -2,13 +2,19 @@ use crate::proof_tests::{CRS_PATH_G1, CRS_PATH_G2};
 use ark_bn254::Bn254;
 use co_ultrahonk::prelude::{
     CoUltraHonk, Poseidon2Sponge, ProvingKey, ShamirCoBuilder, SharedBuilderVariable,
-    UltraCircuitBuilder, UltraCircuitVariable, UltraHonk, Utils, VerifyingKey,
+    TranscriptFieldType, TranscriptHasher, UltraCircuitBuilder, UltraCircuitVariable, UltraHonk,
+    Utils, VerifyingKey,
 };
 use mpc_core::protocols::shamir::ShamirProtocol;
+use sha3::Keccak256;
 use std::thread;
 use tests::shamir_network::ShamirTestNetwork;
 
-fn proof_test(name: &str, num_parties: usize, threshold: usize) {
+fn proof_test<H: TranscriptHasher<TranscriptFieldType>>(
+    name: &str,
+    num_parties: usize,
+    threshold: usize,
+) {
     let circuit_file = format!("../test_vectors/noir/{}/kat/{}.json", name, name);
     let witness_file = format!("../test_vectors/noir/{}/kat/{}.gz", name, name);
 
@@ -44,7 +50,7 @@ fn proof_test(name: &str, num_parties: usize, threshold: usize) {
             let driver = ShamirProtocol::new(threshold, net).unwrap();
             let proving_key = ProvingKey::create(&driver, builder, prover_crs);
 
-            let prover = CoUltraHonk::<_, _, Poseidon2Sponge>::new(driver);
+            let prover = CoUltraHonk::<_, _, H>::new(driver);
             prover.prove(proving_key).unwrap()
         }));
     }
@@ -65,11 +71,16 @@ fn proof_test(name: &str, num_parties: usize, threshold: usize) {
     let crs = VerifyingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
     let verifying_key = VerifyingKey::create(builder, crs).unwrap();
 
-    let is_valid = UltraHonk::<_, Poseidon2Sponge>::verify(proof, verifying_key).unwrap();
+    let is_valid = UltraHonk::<_, H>::verify(proof, verifying_key).unwrap();
     assert!(is_valid);
 }
 
 #[test]
-fn poseidon_proof_test() {
-    proof_test("poseidon", 3, 1);
+fn poseidon_proof_test_poseidon2sponge() {
+    proof_test::<Poseidon2Sponge>("poseidon", 3, 1);
+}
+
+#[test]
+fn poseidon_proof_test_keccak256() {
+    proof_test::<Keccak256>("poseidon", 3, 1);
 }
