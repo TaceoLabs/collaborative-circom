@@ -50,7 +50,7 @@ where
     ) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
         tracing::trace!("CoUltraHonk prove");
 
-        let mut transcript = TranscriptType::new(&POSEIDON2_BN254_T4_PARAMS);
+        let mut transcript = TranscriptType::new();
 
         let oink = CoOink::new(&mut self.driver);
         let oink_result = oink.prove(&proving_key, &mut transcript)?;
