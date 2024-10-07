@@ -9,7 +9,6 @@ use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use std::marker::PhantomData;
 use ultrahonk::prelude::{
     HonkCurve, HonkProof, HonkProofResult, TranscriptFieldType, TranscriptType,
-    POSEIDON2_BN254_T4_PARAMS,
 };
 
 pub struct CoUltraHonk<T, P: HonkCurve<TranscriptFieldType>>
