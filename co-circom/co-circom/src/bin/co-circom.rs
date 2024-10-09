@@ -2,7 +2,6 @@ use ark_bls12_381::Bls12_381;
 use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_mpc_compiler::CoCircomCompiler;
 use circom_types::R1CS;
 use num_traits::Zero;
@@ -30,8 +29,10 @@ use co_circom::TranslateWitnessCli;
 use co_circom::TranslateWitnessConfig;
 use co_circom::VerifyCli;
 use co_circom::VerifyConfig;
-use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem};
-use co_circom_snarks::{SharedInput, SharedWitness};
+use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem, SeedRng};
+use co_circom_snarks::{
+    SerializeableSharedRep3Input, SerializeableSharedRep3Witness, SharedWitness,
+};
 use co_groth16::Groth16;
 use co_groth16::{Rep3CoGroth16, ShamirCoGroth16};
 use co_plonk::Rep3CoPlonk;
@@ -39,13 +40,10 @@ use co_plonk::{Plonk, ShamirCoPlonk};
 use color_eyre::eyre::{eyre, Context, ContextCompat};
 use mpc_core::protocols::{
     bridges::network::RepToShamirNetwork,
-    rep3::{self, network::Rep3MpcNet},
+    rep3::network::Rep3MpcNet,
     shamir::{ShamirPreprocessing, ShamirProtocol},
 };
-use mpc_core::protocols::{
-    rep3::{network::Rep3Network, Rep3PrimeFieldShare},
-    shamir::ShamirPrimeFieldShare,
-};
+use mpc_core::protocols::{rep3::network::Rep3Network, shamir::ShamirPrimeFieldShare};
 use num_bigint::BigUint;
 use num_traits::Num;
 use std::time::Instant;
@@ -199,12 +197,13 @@ where
             }
             // create witness shares
             let start = Instant::now();
-            let shares =
-                SharedWitness::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::share_rep3(
-                    witness,
-                    r1cs.num_inputs,
-                    &mut rng,
-                );
+            let shares = SerializeableSharedRep3Witness::<_, SeedRng>::share_rep3(
+                witness,
+                r1cs.num_inputs,
+                &mut rng,
+                config.seeded,
+                config.additive,
+            );
             let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
             tracing::info!("Sharing took {} ms", duration_ms);
 
@@ -292,9 +291,9 @@ where
 
     // create input shares
     let mut shares = [
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
     ];
 
     let mut rng = rand::thread_rng();
@@ -314,7 +313,12 @@ where
                 .insert(name.clone(), parsed_vals.clone());
             shares[2].public_inputs.insert(name.clone(), parsed_vals);
         } else {
-            let [share0, share1, share2] = rep3::share_field_elements(&parsed_vals, &mut rng);
+            let [share0, share1, share2] = SerializeableSharedRep3Input::share_rep3(
+                &parsed_vals,
+                &mut rng,
+                config.seeded,
+                config.additive,
+            );
             shares[0].shared_inputs.insert(name.clone(), share0);
             shares[1].shared_inputs.insert(name.clone(), share1);
             shares[2].shared_inputs.insert(name.clone(), share2);
@@ -351,6 +355,12 @@ where
     let protocol = config.protocol;
     let out = config.out;
 
+    if protocol != MPCProtocol::REP3 {
+        return Err(eyre!(
+            "Only REP3 protocol is supported for merging input shares"
+        ));
+    }
+
     if inputs.len() < 2 {
         return Err(eyre!("Need at least two input shares to merge"));
     }
@@ -358,16 +368,7 @@ where
         file_utils::check_file_exists(input)?;
     }
 
-    match protocol {
-        MPCProtocol::REP3 => {
-            merge_input_shares::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>(inputs, out)?;
-        }
-        MPCProtocol::SHAMIR => {
-            merge_input_shares::<P::ScalarField, ShamirPrimeFieldShare<P::ScalarField>>(
-                inputs, out,
-            )?;
-        }
-    }
+    merge_input_shares::<P::ScalarField>(inputs, out)?;
 
     Ok(ExitCode::SUCCESS)
 }
@@ -394,13 +395,28 @@ where
     let circuit_path = PathBuf::from(&circuit);
     file_utils::check_file_exists(&circuit_path)?;
 
+    // connect to network
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("while building runtime")?;
+    let mut mpc_net = rt
+        .block_on(Rep3MpcNet::new(config.network.to_owned()))
+        .context("while connecting to network")?;
+
     // parse input shares
     let input_share_file =
         BufReader::new(File::open(&input).context("while opening input share file")?);
-    let input_share = co_circom::parse_shared_input(input_share_file)?;
+    let input_share = rt
+        .block_on(co_circom::parse_shared_input(
+            input_share_file,
+            &mut mpc_net,
+        ))
+        .context("while parsing input")?;
 
     // Extend the witness
-    let result_witness_share = co_circom::generate_witness_rep3::<P>(circuit, input_share, config)?;
+    let result_witness_share =
+        co_circom::generate_witness_rep3::<P, SeedRng>(circuit, input_share, mpc_net, config)?;
 
     // write result to output file
     let out_file = BufWriter::new(std::fs::File::create(&out)?);
@@ -431,8 +447,8 @@ where
     // parse witness shares
     let witness_file =
         BufReader::new(File::open(witness).context("trying to open witness share file")?);
-    let witness_share: SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>> =
-        co_circom::parse_witness_share(witness_file)?;
+    let witness_share: SharedWitness<P::ScalarField, P::ScalarField> =
+        co_circom::parse_witness_share_rep3_as_additive(witness_file)?;
 
     // connect to network
     let net = Rep3MpcNet::new(config.network)
@@ -450,7 +466,7 @@ where
     // Translate witness to shamir shares
     let start = Instant::now();
     let translated_witness = protocol
-        .translate_primefield_repshare_vec(witness_share.witness)
+        .translate_primefield_addshare_vec(witness_share.witness)
         .await
         .context("while translating witness")?;
     let shamir_witness_share: SharedWitness<P::ScalarField, ShamirPrimeFieldShare<P::ScalarField>> =
@@ -507,10 +523,12 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let mut mpc_net = Rep3MpcNet::new(config.network).await?;
+                    let witness_share =
+                        co_circom::parse_witness_share_rep3(witness_file, &mut mpc_net).await?;
                     let public_input = witness_share.public_inputs.clone();
                     // connect to network
-                    let prover = Rep3CoGroth16::with_network_config(config.network)
+                    let prover = Rep3CoGroth16::with_network(mpc_net)
                         .await
                         .context("while building prover")?;
 
@@ -519,7 +537,7 @@ where
                     (proof, public_input)
                 }
                 MPCProtocol::SHAMIR => {
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_shamir(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
 
                     // connect to network
@@ -554,11 +572,14 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let mut mpc_net = Rep3MpcNet::new(config.network).await?;
+                    let witness_share =
+                        co_circom::parse_witness_share_rep3(witness_file, &mut mpc_net).await?;
+
                     let public_input = witness_share.public_inputs.clone();
 
                     //init prover
-                    let prover = Rep3CoPlonk::with_network_config(config.network)
+                    let prover = Rep3CoPlonk::with_network(mpc_net)
                         .await
                         .context("while building prover")?;
 
@@ -567,7 +588,7 @@ where
                     (proof, public_input)
                 }
                 MPCProtocol::SHAMIR => {
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_shamir(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
 
                     //init prover
@@ -756,21 +777,16 @@ fn parse_array<F: PrimeField>(val: &serde_json::Value) -> color_eyre::Result<Vec
     Ok(field_elements)
 }
 
-fn merge_input_shares<F: PrimeField, S>(
-    inputs: Vec<PathBuf>,
-    out: PathBuf,
-) -> color_eyre::Result<()>
-where
-    S: CanonicalSerialize + CanonicalDeserialize + Clone,
-{
+fn merge_input_shares<F: PrimeField>(inputs: Vec<PathBuf>, out: PathBuf) -> color_eyre::Result<()> {
     let start = Instant::now();
     let mut input_shares = inputs
         .iter()
         .map(|input| {
             let input_share_file =
                 BufReader::new(File::open(input).context("while opening input share file")?);
-            let input_share: SharedInput<F, S> = bincode::deserialize_from(input_share_file)
-                .context("trying to parse input share file")?;
+            let input_share: SerializeableSharedRep3Input<F, SeedRng> =
+                bincode::deserialize_from(input_share_file)
+                    .context("trying to parse input share file")?;
             color_eyre::Result::<_>::Ok(input_share)
         })
         .collect::<Result<Vec<_>, _>>()?;

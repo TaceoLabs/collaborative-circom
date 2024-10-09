@@ -4,4 +4,5 @@
 
 pub mod bridges;
 pub mod rep3;
+pub(crate) mod serde_compat;
 pub mod shamir;
