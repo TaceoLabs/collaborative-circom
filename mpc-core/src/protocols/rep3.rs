@@ -14,6 +14,7 @@ pub mod poly;
 pub mod rngs;
 
 use ark_ec::CurveGroup;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 
 use ark_ff::{One, PrimeField};
@@ -22,17 +23,33 @@ use rand::{distributions::Standard, prelude::Distribution, CryptoRng, Rng, Seeda
 pub use arithmetic::types::Rep3PrimeFieldShare;
 pub use binary::types::Rep3BigUintShare;
 pub use pointshare::Rep3PointShare;
+use serde::{Deserialize, Serialize};
 
 pub(crate) type IoResult<T> = std::io::Result<T>;
 
-#[derive(Clone)]
-pub enum SeededType<T: Clone, U: Clone> {
-    Shares(T),
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+
+pub enum SeededType<
+    T: Clone + CanonicalSerialize + CanonicalDeserialize,
+    U: Clone + Serialize + for<'a> Deserialize<'a>,
+> {
+    Shares(
+        #[serde(
+            serialize_with = "super::serde_compat::ark_se",
+            deserialize_with = "super::serde_compat::ark_de"
+        )]
+        T,
+    ),
     Seed(U),
 }
 
-#[derive(Clone)]
-pub struct ReplicatedSeedType<T: Clone, U: Clone> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct ReplicatedSeedType<
+    T: Clone + CanonicalSerialize + CanonicalDeserialize,
+    U: Clone + Serialize + for<'a> Deserialize<'a>,
+> {
     pub(crate) a: SeededType<T, U>,
     pub(crate) b: SeededType<T, U>,
 }
@@ -72,7 +89,7 @@ pub fn share_field_element_seeded<
     rng: &mut R,
 ) -> [ReplicatedSeedType<F, U::Seed>; 3]
 where
-    U::Seed: Clone,
+    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();
@@ -111,7 +128,7 @@ pub fn share_field_element_additive_seeded<
     rng: &mut R,
 ) -> [SeededType<F, U::Seed>; 3]
 where
-    U::Seed: Clone,
+    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();
@@ -175,7 +192,7 @@ pub fn share_field_elements_seeded<
     rng: &mut R,
 ) -> [ReplicatedSeedType<Vec<F>, U::Seed>; 3]
 where
-    U::Seed: Clone,
+    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();
@@ -219,7 +236,7 @@ pub fn share_field_elements_additive_seeded<
     rng: &mut R,
 ) -> [SeededType<Vec<F>, U::Seed>; 3]
 where
-    U::Seed: Clone,
+    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();

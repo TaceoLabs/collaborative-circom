@@ -21,6 +21,7 @@ eyre = { workspace = true }
 mpc-core = { workspace = true }
 num-traits = { workspace = true }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

@@ -31,7 +31,7 @@ use co_circom::TranslateWitnessConfig;
 use co_circom::VerifyCli;
 use co_circom::VerifyConfig;
 use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem};
-use co_circom_snarks::{SharedInput, SharedWitness};
+use co_circom_snarks::{SerializeableSharedRep3Witness, SharedInput, SharedWitness};
 use co_groth16::Groth16;
 use co_groth16::{Rep3CoGroth16, ShamirCoGroth16};
 use co_plonk::Rep3CoPlonk;
@@ -199,12 +199,13 @@ where
             }
             // create witness shares
             let start = Instant::now();
-            let shares =
-                SharedWitness::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::share_rep3(
-                    witness,
-                    r1cs.num_inputs,
-                    &mut rng,
-                );
+            let shares = SerializeableSharedRep3Witness::share_rep3(
+                witness,
+                r1cs.num_inputs,
+                &mut rng,
+                config.seeded,
+                config.additive,
+            );
             let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
             tracing::info!("Sharing took {} ms", duration_ms);
 

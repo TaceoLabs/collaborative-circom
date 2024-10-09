@@ -23,7 +23,7 @@ ark-poly = { workspace = true }
 ark-serialize = { workspace = true }
 bytes = { workspace = true }
 eyre = { workspace = true }
-futures.workspace= true
+futures.workspace = true
 itertools = { workspace = true }
 mpc-net = { workspace = true }
 num-bigint = { workspace = true }
@@ -32,6 +32,7 @@ quinn.workspace = true
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true }
 tokio-util.workspace = true
 tracing.workspace = true

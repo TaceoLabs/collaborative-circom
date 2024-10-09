@@ -9,17 +9,55 @@ use mpc_core::protocols::{
     rep3::{self, Rep3PrimeFieldShare, ReplicatedSeedType, SeededType},
     shamir::{self, ShamirPrimeFieldShare},
 };
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, Rng, SeedableRng};
+use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+type SeedRng = ChaCha12Rng;
+type Seed = <SeedRng as SeedableRng>::Seed;
+
 mod serde_compat;
 
-pub enum Rep3ShareVecType<F: PrimeField, U: Clone> {
-    Replicated(Vec<Rep3PrimeFieldShare<F>>),
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub enum Rep3ShareVecType<F: PrimeField, U>
+where
+    U: Serialize + for<'a> Deserialize<'a> + Clone,
+{
+    Replicated(
+        #[serde(
+            serialize_with = "crate::serde_compat::ark_se",
+            deserialize_with = "crate::serde_compat::ark_de"
+        )]
+        Vec<Rep3PrimeFieldShare<F>>,
+    ),
     SeededReplicated(ReplicatedSeedType<Vec<F>, U>),
-    Additive(Vec<F>),
+    Additive(
+        #[serde(
+            serialize_with = "crate::serde_compat::ark_se",
+            deserialize_with = "crate::serde_compat::ark_de"
+        )]
+        Vec<F>,
+    ),
     SeededAdditive(SeededType<Vec<F>, U>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct SerializeableSharedRep3Witness<F: PrimeField, U>
+where
+    U: Serialize + for<'a> Deserialize<'a> + Clone,
+{
+    /// The public inputs (which are the outputs of the circom circuit).
+    /// This also includes the constant 1 at position 0.
+    #[serde(
+        serialize_with = "crate::serde_compat::ark_se",
+        deserialize_with = "crate::serde_compat::ark_de"
+    )]
+    pub public_inputs: Vec<F>,
+    /// The secret-shared witness elements.
+    pub witness: Rep3ShareVecType<F, U>,
 }
 
 //TODO THE SECRETSHARED TRAIT IS REALLY BAD. WE DO WANT SOMETHING ELSE!
@@ -149,16 +187,51 @@ where
     }
 }
 
-impl<F: PrimeField> SharedWitness<F, Rep3PrimeFieldShare<F>> {
+impl<F: PrimeField> SerializeableSharedRep3Witness<F, Seed> {
     /// Shares a given witness and public input vector using the Rep3 protocol.
     pub fn share_rep3<R: Rng + CryptoRng>(
         witness: Witness<F>,
         num_pub_inputs: usize,
         rng: &mut R,
+        seeded: bool,
+        additive: bool,
     ) -> [Self; 3] {
         let public_inputs = &witness.values[..num_pub_inputs];
         let witness = &witness.values[num_pub_inputs..];
-        let [share1, share2, share3] = rep3::share_field_elements(witness, rng);
+
+        let (share1, share2, share3) = match (seeded, additive) {
+            (true, true) => {
+                let [share1, share2, share3] =
+                    rep3::share_field_elements_additive_seeded::<_, _, SeedRng>(witness, rng);
+                let share1 = Rep3ShareVecType::SeededAdditive(share1);
+                let share2 = Rep3ShareVecType::SeededAdditive(share2);
+                let share3 = Rep3ShareVecType::SeededAdditive(share3);
+                (share1, share2, share3)
+            }
+            (true, false) => {
+                let [share1, share2, share3] =
+                    rep3::share_field_elements_seeded::<_, _, SeedRng>(witness, rng);
+                let share1 = Rep3ShareVecType::SeededReplicated(share1);
+                let share2 = Rep3ShareVecType::SeededReplicated(share2);
+                let share3 = Rep3ShareVecType::SeededReplicated(share3);
+                (share1, share2, share3)
+            }
+            (false, true) => {
+                let [share1, share2, share3] = rep3::share_field_elements_additive(witness, rng);
+                let share1 = Rep3ShareVecType::Additive(share1);
+                let share2 = Rep3ShareVecType::Additive(share2);
+                let share3 = Rep3ShareVecType::Additive(share3);
+                (share1, share2, share3)
+            }
+            (false, false) => {
+                let [share1, share2, share3] = rep3::share_field_elements(witness, rng);
+                let share1 = Rep3ShareVecType::Replicated(share1);
+                let share2 = Rep3ShareVecType::Replicated(share2);
+                let share3 = Rep3ShareVecType::Replicated(share3);
+                (share1, share2, share3)
+            }
+        };
+
         let witness1 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share1,
