@@ -37,9 +37,6 @@ pub struct ReplicatedSeedType<T: Clone, U: Clone> {
     pub(crate) b: SeededType<T, U>,
 }
 
-// type SeedRng = ChaCha12Rng;
-// type Seed = <SeedRng as SeedableRng>::Seed;
-
 /// Secret shares a field element using replicated secret sharing and the provided random number generator. The field element is split into three additive shares, where each party holds two. The outputs are of type [Rep3PrimeFieldShare].
 pub fn share_field_element<F: PrimeField, R: Rng + CryptoRng>(
     val: F,
@@ -52,6 +49,17 @@ pub fn share_field_element<F: PrimeField, R: Rng + CryptoRng>(
     let share2 = Rep3PrimeFieldShare::new(b, a);
     let share3 = Rep3PrimeFieldShare::new(c, b);
     [share1, share2, share3]
+}
+
+/// Secret shares a field element using additive secret sharing and the provided random number generator. The field element is split into three additive shares. The outputs are of type [F].
+pub fn share_field_element_additive<F: PrimeField, R: Rng + CryptoRng>(
+    val: F,
+    rng: &mut R,
+) -> [F; 3] {
+    let a = F::rand(rng);
+    let b = F::rand(rng);
+    let c = val - a - b;
+    [a, b, c]
 }
 
 /// Secret shares a field element using replicated secret sharing, whereas only one additive share is stored while the others are compressed as seeds derived form the provided random number generator. The outputs are of type [Rep3ShareType].
@@ -133,6 +141,23 @@ pub fn share_field_elements<F: PrimeField, R: Rng + CryptoRng>(
     let mut shares3 = Vec::with_capacity(vals.len());
     for val in vals {
         let [share1, share2, share3] = share_field_element(*val, rng);
+        shares1.push(share1);
+        shares2.push(share2);
+        shares3.push(share3);
+    }
+    [shares1, shares2, shares3]
+}
+
+/// Secret shares a vector of field element using additive secret sharing and the provided random number generator. The field elements are split into three additive shares each. The outputs are of type [Rep3PrimeFieldShareVec].
+pub fn share_field_elements_additive<F: PrimeField, R: Rng + CryptoRng>(
+    vals: &[F],
+    rng: &mut R,
+) -> [Vec<F>; 3] {
+    let mut shares1 = Vec::with_capacity(vals.len());
+    let mut shares2 = Vec::with_capacity(vals.len());
+    let mut shares3 = Vec::with_capacity(vals.len());
+    for val in vals {
+        let [share1, share2, share3] = share_field_element_additive(*val, rng);
         shares1.push(share1);
         shares2.push(share2);
         shares3.push(share3);

@@ -134,6 +134,12 @@ pub struct SplitWitnessCli {
     /// The number of parties
     #[arg(short, long, default_value_t = 3)]
     pub num_parties: usize,
+    /// Share with compression using Seeds
+    #[arg(short, long, default_value_t = false)]
+    pub seeded: bool,
+    /// Share compressed as additive shares
+    #[arg(short, long, default_value_t = false)]
+    pub additive: bool,
 }
 
 /// Config for `split_witness`
@@ -153,6 +159,10 @@ pub struct SplitWitnessConfig {
     pub threshold: usize,
     /// The number of parties
     pub num_parties: usize,
+    /// Share with compression using Seeds
+    pub seeded: bool,
+    /// Share compressed as additive shares
+    pub additive: bool,
 }
 
 /// Cli arguments for `split_input`
