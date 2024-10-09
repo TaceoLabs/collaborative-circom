@@ -19,7 +19,8 @@ mod serde_compat;
 #[serde(bound = "")]
 pub enum Rep3ShareVecType<F: PrimeField, U>
 where
-    U: Serialize + for<'a> Deserialize<'a> + Clone,
+    U: Rng + SeedableRng + CryptoRng,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
     Replicated(
         #[serde(
@@ -43,7 +44,7 @@ where
 #[serde(bound = "")]
 pub struct SerializeableSharedRep3Witness<F: PrimeField, U: Rng + SeedableRng + CryptoRng>
 where
-    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
     /// The public inputs (which are the outputs of the circom circuit).
     /// This also includes the constant 1 at position 0.
@@ -53,13 +54,13 @@ where
     )]
     pub public_inputs: Vec<F>,
     /// The secret-shared witness elements.
-    pub witness: Rep3ShareVecType<F, U::Seed>,
+    pub witness: Rep3ShareVecType<F, U>,
     phantom: std::marker::PhantomData<U>,
 }
 
 impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Witness<F, U>
 where
-    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
     pub fn from_shared_witness(inp: SharedWitness<F, Rep3PrimeFieldShare<F>>) -> Self {
         Self {
@@ -199,7 +200,8 @@ where
 
 impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Witness<F, U>
 where
-    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
+
     Standard: Distribution<U::Seed>,
 {
     /// Shares a given witness and public input vector using the Rep3 protocol.

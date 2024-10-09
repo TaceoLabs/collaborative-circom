@@ -23,7 +23,7 @@ use figment::{
 use mpc_core::protocols::{
     rep3::{
         network::{Rep3MpcNet, Rep3Network},
-        Rep3PrimeFieldShare,
+        Rep3PrimeFieldShare, ReplicatedSeedType, SeededType,
     },
     shamir::ShamirPrimeFieldShare,
 };
@@ -508,7 +508,9 @@ pub fn parse_witness_share_rep3<R: Read, F: PrimeField>(
     let witness = deserialized.witness;
     let witness = match witness {
         co_circom_snarks::Rep3ShareVecType::Replicated(vec) => vec,
-        co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => todo!(),
+        co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => {
+            replicated_seed_type.expand_vec()?
+        }
         co_circom_snarks::Rep3ShareVecType::Additive(vec) => todo!(),
         co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => todo!(),
     };
@@ -551,7 +553,7 @@ where
     P: Pairing + CircomArkworksPairingBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
-    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
