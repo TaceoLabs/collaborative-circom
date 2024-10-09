@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) type IoResult<T> = std::io::Result<T>;
 
+/// A type that represents a compressed additive share. It can either be a seed (with length) or the actual share.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 
@@ -38,6 +39,7 @@ pub enum SeededType<
 > where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// The actual additive share
     Shares(
         #[serde(
             serialize_with = "super::serde_compat::ark_se",
@@ -45,6 +47,7 @@ pub enum SeededType<
         )]
         T,
     ),
+    /// A compressed additive share
     Seed(U::Seed, usize, PhantomData<U>),
 }
 
@@ -65,6 +68,7 @@ impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SeededType<Vec<F>, U>
 where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Expands the compressed share.
     pub fn expand_vec(self) -> Vec<F> {
         match self {
             SeededType::Shares(val) => val,
@@ -84,6 +88,7 @@ impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SeededType<F, U>
 where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Expands the compressed share.
     pub fn expand(self) -> F {
         match self {
             SeededType::Shares(val) => val,
@@ -96,6 +101,7 @@ where
     }
 }
 
+/// A type that represents a compressed replicated share. It consists of two compressed additive shares.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct ReplicatedSeedType<
@@ -104,7 +110,9 @@ pub struct ReplicatedSeedType<
 > where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// The first compressed additive share
     pub a: SeededType<T, U>,
+    /// The second compressed additive share
     pub b: SeededType<T, U>,
 }
 
@@ -112,6 +120,7 @@ impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> ReplicatedSeedType<F, U>
 where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Expands the compressed share.
     pub fn expand(self) -> Rep3PrimeFieldShare<F> {
         let a = self.a.expand();
         let b = self.b.expand();
@@ -123,6 +132,7 @@ impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> ReplicatedSeedType<Vec<F>,
 where
     U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Expands the compressed share.
     pub fn expand_vec(self) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         let a = self.a.expand_vec();
         let b = self.b.expand_vec();
@@ -130,7 +140,7 @@ where
             return Err(eyre::eyre!("Lengths of shares do not match"));
         }
         Ok(a.into_iter()
-            .zip(b.into_iter())
+            .zip(b)
             .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
             .collect())
     }

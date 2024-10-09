@@ -31,6 +31,7 @@ use mpc_net::config::NetworkConfig;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
+/// The Rng used for expanding compressed Shares
 pub type SeedRng = rand_chacha::ChaCha12Rng;
 
 /// A module for file utility functions.

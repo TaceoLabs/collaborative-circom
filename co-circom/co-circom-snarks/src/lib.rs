@@ -274,6 +274,32 @@ where
     }
 }
 
+impl<F: PrimeField> SharedWitness<F, Rep3PrimeFieldShare<F>> {
+    /// Shares a given witness and public input vector using the rep3 protocol.
+    pub fn share_rep3<R: Rng + CryptoRng>(
+        witness: Witness<F>,
+        num_pub_inputs: usize,
+        rng: &mut R,
+    ) -> [Self; 3] {
+        let public_inputs = &witness.values[..num_pub_inputs];
+        let witness = &witness.values[num_pub_inputs..];
+        let [share1, share2, share3] = rep3::share_field_elements(witness, rng);
+        let witness1 = Self {
+            public_inputs: public_inputs.to_vec(),
+            witness: share1,
+        };
+        let witness2 = Self {
+            public_inputs: public_inputs.to_vec(),
+            witness: share2,
+        };
+        let witness3 = Self {
+            public_inputs: public_inputs.to_vec(),
+            witness: share3,
+        };
+        [witness1, witness2, witness3]
+    }
+}
+
 impl<F: PrimeField> SharedWitness<F, ShamirPrimeFieldShare<F>> {
     /// Shares a given witness and public input vector using the Shamir protocol.
     pub fn share_shamir<R: Rng + CryptoRng>(
