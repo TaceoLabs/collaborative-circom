@@ -2,7 +2,6 @@ use ark_bls12_381::Bls12_381;
 use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_mpc_compiler::CoCircomCompiler;
 use circom_types::R1CS;
 use num_traits::Zero;
@@ -32,7 +31,7 @@ use co_circom::VerifyCli;
 use co_circom::VerifyConfig;
 use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem, SeedRng};
 use co_circom_snarks::{
-    SerializeableSharedRep3Input, SerializeableSharedRep3Witness, SharedInput, SharedWitness,
+    SerializeableSharedRep3Input, SerializeableSharedRep3Witness, SharedWitness,
 };
 use co_groth16::Groth16;
 use co_groth16::{Rep3CoGroth16, ShamirCoGroth16};
@@ -44,10 +43,7 @@ use mpc_core::protocols::{
     rep3::network::Rep3MpcNet,
     shamir::{ShamirPreprocessing, ShamirProtocol},
 };
-use mpc_core::protocols::{
-    rep3::{network::Rep3Network, Rep3PrimeFieldShare},
-    shamir::ShamirPrimeFieldShare,
-};
+use mpc_core::protocols::{rep3::network::Rep3Network, shamir::ShamirPrimeFieldShare};
 use num_bigint::BigUint;
 use num_traits::Num;
 use std::time::Instant;
@@ -359,6 +355,12 @@ where
     let protocol = config.protocol;
     let out = config.out;
 
+    if protocol != MPCProtocol::REP3 {
+        return Err(eyre!(
+            "Only REP3 protocol is supported for merging input shares"
+        ));
+    }
+
     if inputs.len() < 2 {
         return Err(eyre!("Need at least two input shares to merge"));
     }
@@ -366,16 +368,7 @@ where
         file_utils::check_file_exists(input)?;
     }
 
-    match protocol {
-        MPCProtocol::REP3 => {
-            merge_input_shares::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>(inputs, out)?;
-        }
-        MPCProtocol::SHAMIR => {
-            merge_input_shares::<P::ScalarField, ShamirPrimeFieldShare<P::ScalarField>>(
-                inputs, out,
-            )?;
-        }
-    }
+    merge_input_shares::<P::ScalarField>(inputs, out)?;
 
     Ok(ExitCode::SUCCESS)
 }
@@ -784,21 +777,16 @@ fn parse_array<F: PrimeField>(val: &serde_json::Value) -> color_eyre::Result<Vec
     Ok(field_elements)
 }
 
-fn merge_input_shares<F: PrimeField, S>(
-    inputs: Vec<PathBuf>,
-    out: PathBuf,
-) -> color_eyre::Result<()>
-where
-    S: CanonicalSerialize + CanonicalDeserialize + Clone,
-{
+fn merge_input_shares<F: PrimeField>(inputs: Vec<PathBuf>, out: PathBuf) -> color_eyre::Result<()> {
     let start = Instant::now();
     let mut input_shares = inputs
         .iter()
         .map(|input| {
             let input_share_file =
                 BufReader::new(File::open(input).context("while opening input share file")?);
-            let input_share: SharedInput<F, S> = bincode::deserialize_from(input_share_file)
-                .context("trying to parse input share file")?;
+            let input_share: SerializeableSharedRep3Input<F, SeedRng> =
+                bincode::deserialize_from(input_share_file)
+                    .context("trying to parse input share file")?;
             color_eyre::Result::<_>::Ok(input_share)
         })
         .collect::<Result<Vec<_>, _>>()?;
