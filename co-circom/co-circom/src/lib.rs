@@ -23,7 +23,7 @@ use figment::{
 use mpc_core::protocols::{
     rep3::{
         network::{Rep3MpcNet, Rep3Network},
-        Rep3PrimeFieldShare, ReplicatedSeedType, SeededType,
+        Rep3PrimeFieldShare,
     },
     shamir::ShamirPrimeFieldShare,
 };
@@ -32,7 +32,6 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 pub type SeedRng = rand_chacha::ChaCha12Rng;
-type Seed = <SeedRng as SeedableRng>::Seed;
 
 /// A module for file utility functions.
 pub mod file_utils;
@@ -497,9 +496,32 @@ impl_config!(TranslateWitnessCli, TranslateWitnessConfig);
 impl_config!(GenerateProofCli, GenerateProofConfig);
 impl_config!(VerifyCli, VerifyConfig);
 
+async fn reshare_vec<F: PrimeField>(
+    vec: Vec<F>,
+    mpc_net: &mut Rep3MpcNet,
+) -> color_eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    mpc_net.send_next_many(&vec).await?;
+    let b: Vec<F> = mpc_net.recv_prev_many().await?;
+
+    if vec.len() != b.len() {
+        return Err(color_eyre::eyre::eyre!(
+            "reshare_vec: vec and b have different lengths"
+        ));
+    }
+
+    let shares = vec
+        .into_iter()
+        .zip(b)
+        .map(|(a, b)| Rep3PrimeFieldShare { a, b })
+        .collect();
+
+    Ok(shares)
+}
+
 /// Try to parse a [SharedWitness] from a [Read]er.
-pub fn parse_witness_share_rep3<R: Read, F: PrimeField>(
+pub async fn parse_witness_share_rep3<R: Read, F: PrimeField>(
     reader: R,
+    mpc_net: &mut Rep3MpcNet,
 ) -> color_eyre::Result<SharedWitness<F, Rep3PrimeFieldShare<F>>> {
     let deserialized: SerializeableSharedRep3Witness<F, SeedRng> =
         bincode::deserialize_from(reader).context("trying to parse witness share file")?;
@@ -511,8 +533,10 @@ pub fn parse_witness_share_rep3<R: Read, F: PrimeField>(
         co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => {
             replicated_seed_type.expand_vec()?
         }
-        co_circom_snarks::Rep3ShareVecType::Additive(vec) => todo!(),
-        co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => todo!(),
+        co_circom_snarks::Rep3ShareVecType::Additive(vec) => reshare_vec(vec, mpc_net).await?,
+        co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => {
+            reshare_vec(seeded_type.expand_vec(), mpc_net).await?
+        }
     };
 
     Ok(SharedWitness {

@@ -509,10 +509,12 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share_rep3(witness_file)?;
+                    let mut mpc_net = Rep3MpcNet::new(config.network).await?;
+                    let witness_share =
+                        co_circom::parse_witness_share_rep3(witness_file, &mut mpc_net).await?;
                     let public_input = witness_share.public_inputs.clone();
                     // connect to network
-                    let prover = Rep3CoGroth16::with_network_config(config.network)
+                    let prover = Rep3CoGroth16::with_network(mpc_net)
                         .await
                         .context("while building prover")?;
 
@@ -556,11 +558,14 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share_rep3(witness_file)?;
+                    let mut mpc_net = Rep3MpcNet::new(config.network).await?;
+                    let witness_share =
+                        co_circom::parse_witness_share_rep3(witness_file, &mut mpc_net).await?;
+
                     let public_input = witness_share.public_inputs.clone();
 
                     //init prover
-                    let prover = Rep3CoPlonk::with_network_config(config.network)
+                    let prover = Rep3CoPlonk::with_network(mpc_net)
                         .await
                         .context("while building prover")?;
 
