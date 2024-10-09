@@ -433,8 +433,8 @@ where
     // parse witness shares
     let witness_file =
         BufReader::new(File::open(witness).context("trying to open witness share file")?);
-    let witness_share: SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>> =
-        co_circom::parse_witness_share_rep3(witness_file)?;
+    let witness_share: SharedWitness<P::ScalarField, P::ScalarField> =
+        co_circom::parse_witness_share_rep3_as_additive(witness_file)?;
 
     // connect to network
     let net = Rep3MpcNet::new(config.network)
@@ -452,7 +452,7 @@ where
     // Translate witness to shamir shares
     let start = Instant::now();
     let translated_witness = protocol
-        .translate_primefield_repshare_vec(witness_share.witness)
+        .translate_primefield_addshare_vec(witness_share.witness)
         .await
         .context("while translating witness")?;
     let shamir_witness_share: SharedWitness<P::ScalarField, ShamirPrimeFieldShare<P::ScalarField>> =

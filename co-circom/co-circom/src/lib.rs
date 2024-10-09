@@ -521,6 +521,32 @@ pub fn parse_witness_share_rep3<R: Read, F: PrimeField>(
     })
 }
 
+/// Try to parse a [SharedWitness] from a [Read]er, returning only the additive shares
+pub fn parse_witness_share_rep3_as_additive<R: Read, F: PrimeField>(
+    reader: R,
+) -> color_eyre::Result<SharedWitness<F, F>> {
+    let deserialized: SerializeableSharedRep3Witness<F, SeedRng> =
+        bincode::deserialize_from(reader).context("trying to parse witness share file")?;
+
+    let public_inputs = deserialized.public_inputs;
+    let witness = deserialized.witness;
+    let witness = match witness {
+        co_circom_snarks::Rep3ShareVecType::Replicated(vec) => {
+            vec.into_iter().map(|x| x.a).collect::<Vec<_>>()
+        }
+        co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => {
+            replicated_seed_type.a.expand_vec()
+        }
+        co_circom_snarks::Rep3ShareVecType::Additive(vec) => vec,
+        co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => seeded_type.expand_vec(),
+    };
+
+    Ok(SharedWitness {
+        public_inputs,
+        witness,
+    })
+}
+
 /// Try to parse a [SharedWitness] from a [Read]er.
 pub fn parse_witness_share_shamir<R: Read, F: PrimeField>(
     reader: R,

@@ -37,6 +37,37 @@ impl<F: PrimeField, N: ShamirNetwork> ShamirProtocol<F, N> {
         self.degree_reduce_vec(muls).await
     }
 
+    /// Translate a 3-party additive prime field share into a 3-party Shamir prime field share, where the underlying sharing polynomial is of degree 1 (i.e., the threshold t = 1).
+    pub async fn translate_primefield_addshare(
+        &mut self,
+        input: F,
+    ) -> std::io::Result<ShamirPrimeFieldShare<F>> {
+        // Essentially, a mul function
+        let my_lagrange_coeff = self.open_lagrange_2t[0]
+            .inverse()
+            .expect("lagrange coeff must be invertible");
+        let mul = input * my_lagrange_coeff;
+        self.degree_reduce(mul).await
+    }
+
+    /// Translate a 3-party additive prime field share vector into a 3-party Shamir prime field share vector, where the underlying sharing polynomial is of degree 1 (i.e., the threshold t = 1).
+    pub async fn translate_primefield_addshare_vec(
+        &mut self,
+        input: Vec<F>,
+    ) -> std::io::Result<Vec<ShamirPrimeFieldShare<F>>> {
+        // Essentially, a mul_vec function
+        let my_lagrange_coeff = self.open_lagrange_2t[0]
+            .inverse()
+            .expect("lagrange coeff must be invertible");
+        // TODO maybe we do not collect here? we can just provide the iter
+        // to the next function?
+        let muls = input
+            .into_iter()
+            .map(|share| share * my_lagrange_coeff)
+            .collect::<Vec<_>>();
+        self.degree_reduce_vec(muls).await
+    }
+
     /// Translate a Rep3 point share into a 3-party Shamir point share, where the underlying sharing polynomial is of degree 1 (i.e., the threshold t = 1).
     pub async fn translate_point_repshare<C>(
         &mut self,

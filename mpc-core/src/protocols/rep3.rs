@@ -13,6 +13,8 @@ pub mod pointshare;
 pub mod poly;
 pub mod rngs;
 
+use std::marker::PhantomData;
+
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
@@ -27,13 +29,15 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) type IoResult<T> = std::io::Result<T>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 
 pub enum SeededType<
     T: Clone + CanonicalSerialize + CanonicalDeserialize,
-    U: Clone + Serialize + for<'a> Deserialize<'a>,
-> {
+    U: Rng + SeedableRng + CryptoRng,
+> where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
     Shares(
         #[serde(
             serialize_with = "super::serde_compat::ark_se",
@@ -41,17 +45,95 @@ pub enum SeededType<
         )]
         T,
     ),
-    Seed(U),
+    Seed(U::Seed, usize, PhantomData<U>),
+}
+
+impl<T: Clone + CanonicalSerialize + CanonicalDeserialize, U: Rng + SeedableRng + CryptoRng> Clone
+    for SeededType<T, U>
+where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    fn clone(&self) -> Self {
+        match self {
+            SeededType::Shares(val) => SeededType::Shares(val.clone()),
+            SeededType::Seed(seed, len, _) => SeededType::Seed(seed.clone(), *len, PhantomData),
+        }
+    }
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SeededType<Vec<F>, U>
+where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    pub fn expand_vec(self) -> Vec<F> {
+        match self {
+            SeededType::Shares(val) => val,
+            SeededType::Seed(seed, len, _) => {
+                let mut rng = U::from_seed(seed);
+                let mut shares = Vec::with_capacity(len);
+                for _ in 0..len {
+                    shares.push(F::rand(&mut rng));
+                }
+                shares
+            }
+        }
+    }
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SeededType<F, U>
+where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    pub fn expand(self) -> F {
+        match self {
+            SeededType::Shares(val) => val,
+            SeededType::Seed(seed, len, _) => {
+                assert_eq!(len, 1);
+                let mut rng = U::from_seed(seed);
+                F::rand(&mut rng)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct ReplicatedSeedType<
     T: Clone + CanonicalSerialize + CanonicalDeserialize,
-    U: Clone + Serialize + for<'a> Deserialize<'a>,
-> {
-    pub(crate) a: SeededType<T, U>,
-    pub(crate) b: SeededType<T, U>,
+    U: Rng + SeedableRng + CryptoRng,
+> where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    pub a: SeededType<T, U>,
+    pub b: SeededType<T, U>,
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> ReplicatedSeedType<F, U>
+where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    pub fn expand(self) -> Rep3PrimeFieldShare<F> {
+        let a = self.a.expand();
+        let b = self.b.expand();
+        Rep3PrimeFieldShare::new(a, b)
+    }
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> ReplicatedSeedType<Vec<F>, U>
+where
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    pub fn expand_vec(self) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        let a = self.a.expand_vec();
+        let b = self.b.expand_vec();
+        if a.len() != b.len() {
+            return Err(eyre::eyre!("Lengths of shares do not match"));
+        }
+        Ok(a.into_iter()
+            .zip(b.into_iter())
+            .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
+            .collect())
+    }
 }
 
 /// Secret shares a field element using replicated secret sharing and the provided random number generator. The field element is split into three additive shares, where each party holds two. The outputs are of type [Rep3PrimeFieldShare].
@@ -87,9 +169,9 @@ pub fn share_field_element_seeded<
 >(
     val: F,
     rng: &mut R,
-) -> [ReplicatedSeedType<F, U::Seed>; 3]
+) -> [ReplicatedSeedType<F, U>; 3]
 where
-    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();
@@ -103,8 +185,8 @@ where
     let a = val - b - c;
 
     let a = SeededType::Shares(a);
-    let b = SeededType::Seed(seed_b);
-    let c = SeededType::Seed(seed_c);
+    let b = SeededType::Seed(seed_b, 1, PhantomData);
+    let c = SeededType::Seed(seed_c, 1, PhantomData);
 
     let share1 = ReplicatedSeedType {
         a: a.to_owned(),
@@ -126,9 +208,9 @@ pub fn share_field_element_additive_seeded<
 >(
     val: F,
     rng: &mut R,
-) -> [SeededType<F, U::Seed>; 3]
+) -> [SeededType<F, U>; 3]
 where
-    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
     let seed_b = rng.gen::<U::Seed>();
@@ -142,8 +224,8 @@ where
     let a = val - b - c;
 
     let a = SeededType::Shares(a);
-    let b = SeededType::Seed(seed_b);
-    let c = SeededType::Seed(seed_c);
+    let b = SeededType::Seed(seed_b, 1, PhantomData);
+    let c = SeededType::Seed(seed_c, 1, PhantomData);
 
     [a, b, c]
 }
@@ -190,19 +272,20 @@ pub fn share_field_elements_seeded<
 >(
     vals: &[F],
     rng: &mut R,
-) -> [ReplicatedSeedType<Vec<F>, U::Seed>; 3]
+) -> [ReplicatedSeedType<Vec<F>, U>; 3]
 where
-    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
+    let len = vals.len();
     let seed_b = rng.gen::<U::Seed>();
     let seed_c = rng.gen::<U::Seed>();
 
     let mut rng_b = U::from_seed(seed_b.to_owned());
     let mut rng_c = U::from_seed(seed_c.to_owned());
 
-    let b = SeededType::Seed(seed_b);
-    let c = SeededType::Seed(seed_c);
+    let b = SeededType::Seed(seed_b, len, PhantomData);
+    let c = SeededType::Seed(seed_c, len, PhantomData);
 
     let mut a = Vec::with_capacity(vals.len());
     for val in vals {
@@ -234,19 +317,20 @@ pub fn share_field_elements_additive_seeded<
 >(
     vals: &[F],
     rng: &mut R,
-) -> [SeededType<Vec<F>, U::Seed>; 3]
+) -> [SeededType<Vec<F>, U>; 3]
 where
-    U::Seed: Clone + Serialize + for<'a> Deserialize<'a>,
+    U::Seed: std::fmt::Debug + Clone + Serialize + for<'a> Deserialize<'a>,
     Standard: Distribution<U::Seed>,
 {
+    let len = vals.len();
     let seed_b = rng.gen::<U::Seed>();
     let seed_c = rng.gen::<U::Seed>();
 
     let mut rng_b = U::from_seed(seed_b.to_owned());
     let mut rng_c = U::from_seed(seed_c.to_owned());
 
-    let b = SeededType::Seed(seed_b);
-    let c = SeededType::Seed(seed_c);
+    let b = SeededType::Seed(seed_b, len, PhantomData);
+    let c = SeededType::Seed(seed_c, len, PhantomData);
 
     let mut a = Vec::with_capacity(vals.len());
     for val in vals {
