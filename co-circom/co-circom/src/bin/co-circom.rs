@@ -30,7 +30,7 @@ use co_circom::TranslateWitnessCli;
 use co_circom::TranslateWitnessConfig;
 use co_circom::VerifyCli;
 use co_circom::VerifyConfig;
-use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem};
+use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem, SeedRng};
 use co_circom_snarks::{SerializeableSharedRep3Witness, SharedInput, SharedWitness};
 use co_groth16::Groth16;
 use co_groth16::{Rep3CoGroth16, ShamirCoGroth16};
@@ -199,7 +199,7 @@ where
             }
             // create witness shares
             let start = Instant::now();
-            let shares = SerializeableSharedRep3Witness::share_rep3(
+            let shares = SerializeableSharedRep3Witness::<_, SeedRng>::share_rep3(
                 witness,
                 r1cs.num_inputs,
                 &mut rng,
@@ -401,7 +401,8 @@ where
     let input_share = co_circom::parse_shared_input(input_share_file)?;
 
     // Extend the witness
-    let result_witness_share = co_circom::generate_witness_rep3::<P>(circuit, input_share, config)?;
+    let result_witness_share =
+        co_circom::generate_witness_rep3::<P, SeedRng>(circuit, input_share, config)?;
 
     // write result to output file
     let out_file = BufWriter::new(std::fs::File::create(&out)?);
@@ -433,7 +434,7 @@ where
     let witness_file =
         BufReader::new(File::open(witness).context("trying to open witness share file")?);
     let witness_share: SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>> =
-        co_circom::parse_witness_share(witness_file)?;
+        co_circom::parse_witness_share_rep3(witness_file)?;
 
     // connect to network
     let net = Rep3MpcNet::new(config.network)
@@ -508,7 +509,7 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_rep3(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
                     // connect to network
                     let prover = Rep3CoGroth16::with_network_config(config.network)
@@ -520,7 +521,7 @@ where
                     (proof, public_input)
                 }
                 MPCProtocol::SHAMIR => {
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_shamir(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
 
                     // connect to network
@@ -555,7 +556,7 @@ where
                         return Err(eyre!("REP3 only allows the threshold to be 1"));
                     }
 
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_rep3(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
 
                     //init prover
@@ -568,7 +569,7 @@ where
                     (proof, public_input)
                 }
                 MPCProtocol::SHAMIR => {
-                    let witness_share = co_circom::parse_witness_share(witness_file)?;
+                    let witness_share = co_circom::parse_witness_share_shamir(witness_file)?;
                     let public_input = witness_share.public_inputs.clone();
 
                     //init prover

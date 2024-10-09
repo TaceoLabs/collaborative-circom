@@ -13,19 +13,26 @@ use circom_types::{
 };
 use clap::Args;
 use clap::ValueEnum;
-use co_circom_snarks::{SharedInput, SharedWitness};
+use co_circom_snarks::{SerializeableSharedRep3Witness, SharedInput, SharedWitness};
 use co_groth16::Rep3CoGroth16;
 use color_eyre::eyre::Context;
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     Figment,
 };
-use mpc_core::protocols::rep3::{
-    network::{Rep3MpcNet, Rep3Network},
-    Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    rep3::{
+        network::{Rep3MpcNet, Rep3Network},
+        Rep3PrimeFieldShare,
+    },
+    shamir::ShamirPrimeFieldShare,
 };
 use mpc_net::config::NetworkConfig;
+use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+
+pub type SeedRng = rand_chacha::ChaCha12Rng;
+type Seed = <SeedRng as SeedableRng>::Seed;
 
 /// A module for file utility functions.
 pub mod file_utils;
@@ -491,12 +498,31 @@ impl_config!(GenerateProofCli, GenerateProofConfig);
 impl_config!(VerifyCli, VerifyConfig);
 
 /// Try to parse a [SharedWitness] from a [Read]er.
-pub fn parse_witness_share<R: Read, F: PrimeField, S>(
+pub fn parse_witness_share_rep3<R: Read, F: PrimeField>(
     reader: R,
-) -> color_eyre::Result<SharedWitness<F, S>>
-where
-    S: CanonicalSerialize + CanonicalDeserialize + Clone,
-{
+) -> color_eyre::Result<SharedWitness<F, Rep3PrimeFieldShare<F>>> {
+    let deserialized: SerializeableSharedRep3Witness<F, SeedRng> =
+        bincode::deserialize_from(reader).context("trying to parse witness share file")?;
+
+    let public_inputs = deserialized.public_inputs;
+    let witness = deserialized.witness;
+    let witness = match witness {
+        co_circom_snarks::Rep3ShareVecType::Replicated(vec) => vec,
+        co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => todo!(),
+        co_circom_snarks::Rep3ShareVecType::Additive(vec) => todo!(),
+        co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => todo!(),
+    };
+
+    Ok(SharedWitness {
+        public_inputs,
+        witness,
+    })
+}
+
+/// Try to parse a [SharedWitness] from a [Read]er.
+pub fn parse_witness_share_shamir<R: Read, F: PrimeField>(
+    reader: R,
+) -> color_eyre::Result<SharedWitness<F, ShamirPrimeFieldShare<F>>> {
     bincode::deserialize_from(reader).context("trying to parse witness share file")
 }
 
@@ -516,15 +542,16 @@ where
 /// 2. Compile the circuit to MPC VM bytecode.
 /// 3. Set up a network connection to the MPC network.
 /// 4. Execute the bytecode on the MPC VM to generate the witness.
-pub fn generate_witness_rep3<P>(
+pub fn generate_witness_rep3<P, U: Rng + SeedableRng + CryptoRng>(
     circuit: String,
     input_share: SharedInput<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>,
     config: GenerateWitnessConfig,
-) -> color_eyre::Result<SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>>
+) -> color_eyre::Result<SerializeableSharedRep3Witness<P::ScalarField, U>>
 where
     P: Pairing + CircomArkworksPairingBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -560,7 +587,11 @@ where
 
     rep3_vm.close_network()?;
 
-    Ok(result_witness_share.into_shared_witness())
+    let res = SerializeableSharedRep3Witness::from_shared_witness(
+        result_witness_share.into_shared_witness(),
+    );
+
+    Ok(res)
 }
 
 /// Invoke the MPC proof generation process. It will return a [`Groth16Proof`] if successful.

@@ -9,13 +9,9 @@ use mpc_core::protocols::{
     rep3::{self, Rep3PrimeFieldShare, ReplicatedSeedType, SeededType},
     shamir::{self, ShamirPrimeFieldShare},
 };
-use rand::{CryptoRng, Rng, SeedableRng};
-use rand_chacha::ChaCha12Rng;
+use rand::{distributions::Standard, prelude::Distribution, CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-type SeedRng = ChaCha12Rng;
-type Seed = <SeedRng as SeedableRng>::Seed;
 
 mod serde_compat;
 
@@ -45,9 +41,9 @@ where
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct SerializeableSharedRep3Witness<F: PrimeField, U>
+pub struct SerializeableSharedRep3Witness<F: PrimeField, U: Rng + SeedableRng + CryptoRng>
 where
-    U: Serialize + for<'a> Deserialize<'a> + Clone,
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
 {
     /// The public inputs (which are the outputs of the circom circuit).
     /// This also includes the constant 1 at position 0.
@@ -57,7 +53,21 @@ where
     )]
     pub public_inputs: Vec<F>,
     /// The secret-shared witness elements.
-    pub witness: Rep3ShareVecType<F, U>,
+    pub witness: Rep3ShareVecType<F, U::Seed>,
+    phantom: std::marker::PhantomData<U>,
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Witness<F, U>
+where
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+{
+    pub fn from_shared_witness(inp: SharedWitness<F, Rep3PrimeFieldShare<F>>) -> Self {
+        Self {
+            public_inputs: inp.public_inputs,
+            witness: Rep3ShareVecType::Replicated(inp.witness),
+            phantom: std::marker::PhantomData,
+        }
+    }
 }
 
 //TODO THE SECRETSHARED TRAIT IS REALLY BAD. WE DO WANT SOMETHING ELSE!
@@ -187,7 +197,11 @@ where
     }
 }
 
-impl<F: PrimeField> SerializeableSharedRep3Witness<F, Seed> {
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Witness<F, U>
+where
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone,
+    Standard: Distribution<U::Seed>,
+{
     /// Shares a given witness and public input vector using the Rep3 protocol.
     pub fn share_rep3<R: Rng + CryptoRng>(
         witness: Witness<F>,
@@ -202,7 +216,7 @@ impl<F: PrimeField> SerializeableSharedRep3Witness<F, Seed> {
         let (share1, share2, share3) = match (seeded, additive) {
             (true, true) => {
                 let [share1, share2, share3] =
-                    rep3::share_field_elements_additive_seeded::<_, _, SeedRng>(witness, rng);
+                    rep3::share_field_elements_additive_seeded::<_, _, U>(witness, rng);
                 let share1 = Rep3ShareVecType::SeededAdditive(share1);
                 let share2 = Rep3ShareVecType::SeededAdditive(share2);
                 let share3 = Rep3ShareVecType::SeededAdditive(share3);
@@ -210,7 +224,7 @@ impl<F: PrimeField> SerializeableSharedRep3Witness<F, Seed> {
             }
             (true, false) => {
                 let [share1, share2, share3] =
-                    rep3::share_field_elements_seeded::<_, _, SeedRng>(witness, rng);
+                    rep3::share_field_elements_seeded::<_, _, U>(witness, rng);
                 let share1 = Rep3ShareVecType::SeededReplicated(share1);
                 let share2 = Rep3ShareVecType::SeededReplicated(share2);
                 let share3 = Rep3ShareVecType::SeededReplicated(share3);
@@ -235,14 +249,17 @@ impl<F: PrimeField> SerializeableSharedRep3Witness<F, Seed> {
         let witness1 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share1,
+            phantom: std::marker::PhantomData,
         };
         let witness2 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share2,
+            phantom: std::marker::PhantomData,
         };
         let witness3 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share3,
+            phantom: std::marker::PhantomData,
         };
         [witness1, witness2, witness3]
     }
