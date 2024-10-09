@@ -61,7 +61,6 @@ where
     pub public_inputs: Vec<F>,
     /// The secret-shared witness elements.
     pub witness: Rep3ShareVecType<F, U>,
-    phantom: std::marker::PhantomData<U>,
 }
 
 impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Witness<F, U>
@@ -73,7 +72,6 @@ where
         Self {
             public_inputs: inp.public_inputs,
             witness: Rep3ShareVecType::Replicated(inp.witness),
-            phantom: std::marker::PhantomData,
         }
     }
 }
@@ -98,6 +96,85 @@ where
     )]
     /// The secret-shared witness elements.
     pub witness: Vec<S>,
+}
+
+/// This type represents the serialized version of a Rep3 witness. Its share can be either additive or replicated, and in both cases also compressed.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct SerializeableSharedRep3Input<F: PrimeField, U: Rng + SeedableRng + CryptoRng>
+where
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
+{
+    #[serde(
+        serialize_with = "crate::serde_compat::ark_se",
+        deserialize_with = "crate::serde_compat::ark_de"
+    )]
+    /// A map from variable names to the public field elements.
+    /// This is a BTreeMap because it implements Canonical(De)Serialize.
+    pub public_inputs: BTreeMap<String, Vec<F>>,
+    /// A map from variable names to the share of the field element.
+    /// This is a BTreeMap because it implements Canonical(De)Serialize.
+    pub shared_inputs: BTreeMap<String, Rep3ShareVecType<F, U>>,
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> Default for SerializeableSharedRep3Input<F, U>
+where
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
+{
+    fn default() -> Self {
+        Self {
+            public_inputs: BTreeMap::new(),
+            shared_inputs: BTreeMap::new(),
+        }
+    }
+}
+
+impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Input<F, U>
+where
+    U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
+    Standard: Distribution<U::Seed>,
+{
+    /// Shares a given input into a [Rep3ShareVecType] type.
+    pub fn share_rep3<R: Rng + CryptoRng>(
+        input: &[F],
+        rng: &mut R,
+        seeded: bool,
+        additive: bool,
+    ) -> [Rep3ShareVecType<F, U>; 3] {
+        let (share1, share2, share3) = match (seeded, additive) {
+            (true, true) => {
+                let [share1, share2, share3] =
+                    rep3::share_field_elements_additive_seeded::<_, _, U>(input, rng);
+                let share1 = Rep3ShareVecType::SeededAdditive(share1);
+                let share2 = Rep3ShareVecType::SeededAdditive(share2);
+                let share3 = Rep3ShareVecType::SeededAdditive(share3);
+                (share1, share2, share3)
+            }
+            (true, false) => {
+                let [share1, share2, share3] =
+                    rep3::share_field_elements_seeded::<_, _, U>(input, rng);
+                let share1 = Rep3ShareVecType::SeededReplicated(share1);
+                let share2 = Rep3ShareVecType::SeededReplicated(share2);
+                let share3 = Rep3ShareVecType::SeededReplicated(share3);
+                (share1, share2, share3)
+            }
+            (false, true) => {
+                let [share1, share2, share3] = rep3::share_field_elements_additive(input, rng);
+                let share1 = Rep3ShareVecType::Additive(share1);
+                let share2 = Rep3ShareVecType::Additive(share2);
+                let share3 = Rep3ShareVecType::Additive(share3);
+                (share1, share2, share3)
+            }
+            (false, false) => {
+                let [share1, share2, share3] = rep3::share_field_elements(input, rng);
+                let share1 = Rep3ShareVecType::Replicated(share1);
+                let share2 = Rep3ShareVecType::Replicated(share2);
+                let share3 = Rep3ShareVecType::Replicated(share3);
+                (share1, share2, share3)
+            }
+        };
+        [share1, share2, share3]
+    }
 }
 
 /// A shared input for a collaborative circom witness extension.
@@ -222,53 +299,20 @@ where
         let public_inputs = &witness.values[..num_pub_inputs];
         let witness = &witness.values[num_pub_inputs..];
 
-        let (share1, share2, share3) = match (seeded, additive) {
-            (true, true) => {
-                let [share1, share2, share3] =
-                    rep3::share_field_elements_additive_seeded::<_, _, U>(witness, rng);
-                let share1 = Rep3ShareVecType::SeededAdditive(share1);
-                let share2 = Rep3ShareVecType::SeededAdditive(share2);
-                let share3 = Rep3ShareVecType::SeededAdditive(share3);
-                (share1, share2, share3)
-            }
-            (true, false) => {
-                let [share1, share2, share3] =
-                    rep3::share_field_elements_seeded::<_, _, U>(witness, rng);
-                let share1 = Rep3ShareVecType::SeededReplicated(share1);
-                let share2 = Rep3ShareVecType::SeededReplicated(share2);
-                let share3 = Rep3ShareVecType::SeededReplicated(share3);
-                (share1, share2, share3)
-            }
-            (false, true) => {
-                let [share1, share2, share3] = rep3::share_field_elements_additive(witness, rng);
-                let share1 = Rep3ShareVecType::Additive(share1);
-                let share2 = Rep3ShareVecType::Additive(share2);
-                let share3 = Rep3ShareVecType::Additive(share3);
-                (share1, share2, share3)
-            }
-            (false, false) => {
-                let [share1, share2, share3] = rep3::share_field_elements(witness, rng);
-                let share1 = Rep3ShareVecType::Replicated(share1);
-                let share2 = Rep3ShareVecType::Replicated(share2);
-                let share3 = Rep3ShareVecType::Replicated(share3);
-                (share1, share2, share3)
-            }
-        };
+        let [share1, share2, share3] =
+            SerializeableSharedRep3Input::share_rep3(witness, rng, seeded, additive);
 
         let witness1 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share1,
-            phantom: std::marker::PhantomData,
         };
         let witness2 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share2,
-            phantom: std::marker::PhantomData,
         };
         let witness3 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share3,
-            phantom: std::marker::PhantomData,
         };
         [witness1, witness2, witness3]
     }

@@ -1,10 +1,9 @@
 #![warn(missing_docs)]
 //! This crate provides a binary and associated helper library for running collaborative SNARK proofs.
-use std::{io::Read, path::PathBuf, time::Instant};
+use std::{collections::BTreeMap, io::Read, path::PathBuf, time::Instant};
 
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_mpc_compiler::{CoCircomCompiler, CompilerConfig};
 use circom_mpc_vm::mpc_vm::VMConfig;
 use circom_types::{
@@ -13,7 +12,9 @@ use circom_types::{
 };
 use clap::Args;
 use clap::ValueEnum;
-use co_circom_snarks::{SerializeableSharedRep3Witness, SharedInput, SharedWitness};
+use co_circom_snarks::{
+    SerializeableSharedRep3Input, SerializeableSharedRep3Witness, SharedInput, SharedWitness,
+};
 use co_groth16::Rep3CoGroth16;
 use color_eyre::eyre::Context;
 use figment::{
@@ -199,6 +200,12 @@ pub struct SplitInputCli {
     #[arg(long)]
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub out_dir: Option<PathBuf>,
+    /// Share with compression using Seeds
+    #[arg(short, long, default_value_t = false)]
+    pub seeded: bool,
+    /// Share compressed as additive shares
+    #[arg(short, long, default_value_t = false)]
+    pub additive: bool,
 }
 
 /// Config for `split_input`
@@ -217,6 +224,10 @@ pub struct SplitInputConfig {
     /// MPC compiler config
     #[serde(default)]
     pub compiler: CompilerConfig,
+    /// Share with compression using Seeds
+    pub seeded: bool,
+    /// Share compressed as additive shares
+    pub additive: bool,
 }
 
 /// Cli arguments for `merge_input_shares`
@@ -580,13 +591,54 @@ pub fn parse_witness_share_shamir<R: Read, F: PrimeField>(
 }
 
 /// Try to parse a [SharedInput] from a [Read]er.
-pub fn parse_shared_input<R: Read, F: PrimeField, S>(
+pub async fn parse_shared_input<R: Read, F: PrimeField>(
     reader: R,
-) -> color_eyre::Result<SharedInput<F, S>>
-where
-    S: CanonicalSerialize + CanonicalDeserialize + Clone,
-{
-    bincode::deserialize_from(reader).context("trying to parse input share file")
+    mpc_net: &mut Rep3MpcNet,
+) -> color_eyre::Result<SharedInput<F, Rep3PrimeFieldShare<F>>> {
+    let deserialized: SerializeableSharedRep3Input<F, SeedRng> =
+        bincode::deserialize_from(reader).context("trying to parse input share file")?;
+
+    let public_inputs = deserialized.public_inputs;
+    let shared_inputs_ = deserialized.shared_inputs;
+
+    let mut shared_inputs = BTreeMap::new();
+
+    let mut to_reshare = Vec::new();
+
+    for (_, share) in shared_inputs_.iter() {
+        match share {
+            co_circom_snarks::Rep3ShareVecType::Replicated(_) => {}
+            co_circom_snarks::Rep3ShareVecType::SeededReplicated(_) => {}
+            co_circom_snarks::Rep3ShareVecType::Additive(vec) => to_reshare.extend_from_slice(vec),
+            co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => {
+                to_reshare.extend_from_slice(&(seeded_type.to_owned().expand_vec()))
+            }
+        }
+    }
+
+    let mut reshared = reshare_vec(to_reshare, mpc_net).await?;
+
+    for (name, share) in shared_inputs_ {
+        match share {
+            co_circom_snarks::Rep3ShareVecType::Replicated(vec) => {
+                shared_inputs.insert(name, vec);
+            }
+            co_circom_snarks::Rep3ShareVecType::SeededReplicated(replicated_seed_type) => {
+                shared_inputs.insert(name, replicated_seed_type.expand_vec()?);
+            }
+            co_circom_snarks::Rep3ShareVecType::Additive(vec) => {
+                shared_inputs.insert(name, reshared.drain(..vec.len()).collect());
+            }
+            co_circom_snarks::Rep3ShareVecType::SeededAdditive(seeded_type) => {
+                shared_inputs.insert(name, reshared.drain(..seeded_type.length()).collect());
+            }
+        }
+    }
+
+    Ok(SharedInput {
+        public_inputs,
+        shared_inputs,
+    })
 }
 
 /// Invoke the MPC witness generation process. It will return a [SharedWitness] if successful.
@@ -598,6 +650,7 @@ where
 pub fn generate_witness_rep3<P, U: Rng + SeedableRng + CryptoRng>(
     circuit: String,
     input_share: SharedInput<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>,
+    net: Rep3MpcNet,
     config: GenerateWitnessConfig,
 ) -> color_eyre::Result<SerializeableSharedRep3Witness<P::ScalarField, U>>
 where
@@ -606,11 +659,6 @@ where
     P::ScalarField: CircomArkworksPrimeFieldBridge,
     U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("while building runtime")?;
-
     let circuit_path = PathBuf::from(&circuit);
     file_utils::check_file_exists(&circuit_path)?;
 
@@ -618,10 +666,6 @@ where
     let parsed_circom_circuit = CoCircomCompiler::<P>::parse(circuit, config.compiler)
         .context("while parsing circuit file")?;
 
-    // connect to network
-    let net = rt
-        .block_on(Rep3MpcNet::new(config.network))
-        .context("while connecting to network")?;
     let id = usize::from(net.get_id());
 
     // init MPC protocol

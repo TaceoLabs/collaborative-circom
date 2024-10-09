@@ -82,6 +82,14 @@ where
             }
         }
     }
+
+    /// Returns the length of the share
+    pub fn length(&self) -> usize {
+        match self {
+            SeededType::Shares(val) => val.len(),
+            SeededType::Seed(_, len, _) => *len,
+        }
+    }
 }
 
 impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SeededType<F, U>
@@ -143,6 +151,16 @@ where
             .zip(b)
             .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
             .collect())
+    }
+
+    /// Returns the length of the share
+    pub fn length(&self) -> eyre::Result<usize> {
+        let a = self.a.length();
+        let b = self.b.length();
+        if a != b {
+            return Err(eyre::eyre!("Lengths of shares do not match"));
+        }
+        Ok(a)
     }
 }
 

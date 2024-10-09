@@ -31,7 +31,9 @@ use co_circom::TranslateWitnessConfig;
 use co_circom::VerifyCli;
 use co_circom::VerifyConfig;
 use co_circom::{file_utils, MPCCurve, MPCProtocol, ProofSystem, SeedRng};
-use co_circom_snarks::{SerializeableSharedRep3Witness, SharedInput, SharedWitness};
+use co_circom_snarks::{
+    SerializeableSharedRep3Input, SerializeableSharedRep3Witness, SharedInput, SharedWitness,
+};
 use co_groth16::Groth16;
 use co_groth16::{Rep3CoGroth16, ShamirCoGroth16};
 use co_plonk::Rep3CoPlonk;
@@ -39,7 +41,7 @@ use co_plonk::{Plonk, ShamirCoPlonk};
 use color_eyre::eyre::{eyre, Context, ContextCompat};
 use mpc_core::protocols::{
     bridges::network::RepToShamirNetwork,
-    rep3::{self, network::Rep3MpcNet},
+    rep3::network::Rep3MpcNet,
     shamir::{ShamirPreprocessing, ShamirProtocol},
 };
 use mpc_core::protocols::{
@@ -293,9 +295,9 @@ where
 
     // create input shares
     let mut shares = [
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
-        SharedInput::<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
+        SerializeableSharedRep3Input::<P::ScalarField, SeedRng>::default(),
     ];
 
     let mut rng = rand::thread_rng();
@@ -315,7 +317,12 @@ where
                 .insert(name.clone(), parsed_vals.clone());
             shares[2].public_inputs.insert(name.clone(), parsed_vals);
         } else {
-            let [share0, share1, share2] = rep3::share_field_elements(&parsed_vals, &mut rng);
+            let [share0, share1, share2] = SerializeableSharedRep3Input::share_rep3(
+                &parsed_vals,
+                &mut rng,
+                config.seeded,
+                config.additive,
+            );
             shares[0].shared_inputs.insert(name.clone(), share0);
             shares[1].shared_inputs.insert(name.clone(), share1);
             shares[2].shared_inputs.insert(name.clone(), share2);
@@ -395,14 +402,28 @@ where
     let circuit_path = PathBuf::from(&circuit);
     file_utils::check_file_exists(&circuit_path)?;
 
+    // connect to network
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("while building runtime")?;
+    let mut mpc_net = rt
+        .block_on(Rep3MpcNet::new(config.network.to_owned()))
+        .context("while connecting to network")?;
+
     // parse input shares
     let input_share_file =
         BufReader::new(File::open(&input).context("while opening input share file")?);
-    let input_share = co_circom::parse_shared_input(input_share_file)?;
+    let input_share = rt
+        .block_on(co_circom::parse_shared_input(
+            input_share_file,
+            &mut mpc_net,
+        ))
+        .context("while parsing input")?;
 
     // Extend the witness
     let result_witness_share =
-        co_circom::generate_witness_rep3::<P, SeedRng>(circuit, input_share, config)?;
+        co_circom::generate_witness_rep3::<P, SeedRng>(circuit, input_share, mpc_net, config)?;
 
     // write result to output file
     let out_file = BufWriter::new(std::fs::File::create(&out)?);
