@@ -175,6 +175,36 @@ where
         };
         [share1, share2, share3]
     }
+
+    /// Merges two [SerializeableSharedRep3Input]s into one, performing basic sanity checks.
+    pub fn merge(self, other: Self) -> eyre::Result<Self> {
+        let mut shared_inputs = self.shared_inputs;
+        let public_inputs = self.public_inputs;
+        for (key, value) in other.shared_inputs {
+            if shared_inputs.contains_key(&key) {
+                eyre::bail!("Input with name {} present in multiple input shares", key);
+            }
+            if public_inputs.contains_key(&key) || other.public_inputs.contains_key(&key) {
+                eyre::bail!(
+                    "Input name is once in shared inputs and once in public inputs: \"{key}\""
+                );
+            }
+            shared_inputs.insert(key, value);
+        }
+        for (key, value) in other.public_inputs {
+            if !public_inputs.contains_key(&key) {
+                eyre::bail!("Public input \"{key}\" must be present in all files");
+            }
+            if public_inputs.get(&key).expect("is there we checked") != &value {
+                eyre::bail!("Public input \"{key}\" must be same in all files");
+            }
+        }
+
+        Ok(Self {
+            shared_inputs,
+            public_inputs,
+        })
+    }
 }
 
 /// A shared input for a collaborative circom witness extension.
