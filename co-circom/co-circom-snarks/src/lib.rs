@@ -6,7 +6,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_types::Witness;
 use mpc_core::protocols::{
-    rep3::{self, Rep3PrimeFieldShare},
+    rep3::{self, Rep3PrimeFieldShare, ReplicatedSeedType, SeededType},
     shamir::{self, ShamirPrimeFieldShare},
 };
 use rand::{CryptoRng, Rng};
@@ -14,6 +14,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod serde_compat;
+
+pub enum Rep3ShareVecType<F: PrimeField, U: Clone> {
+    Replicated(Vec<Rep3PrimeFieldShare<F>>),
+    SeededReplicated(ReplicatedSeedType<Vec<F>, U>),
+    Additive(Vec<F>),
+    SeededAdditive(SeededType<Vec<F>, U>),
+}
 
 //TODO THE SECRETSHARED TRAIT IS REALLY BAD. WE DO WANT SOMETHING ELSE!
 /// A shared witness in the circom ecosystem.
