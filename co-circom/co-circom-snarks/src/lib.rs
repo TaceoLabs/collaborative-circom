@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 mod serde_compat;
 
+/// A type representing the different states a share can have. Either full replicated share, only an additive share, or both variants in compressed form.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub enum Rep3ShareVecType<F: PrimeField, U>
@@ -22,6 +23,7 @@ where
     U: Rng + SeedableRng + CryptoRng,
     U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
+    /// A fully expanded replicated share.
     Replicated(
         #[serde(
             serialize_with = "crate::serde_compat::ark_se",
@@ -29,7 +31,9 @@ where
         )]
         Vec<Rep3PrimeFieldShare<F>>,
     ),
+    /// A compressed replicated share.
     SeededReplicated(ReplicatedSeedType<Vec<F>, U>),
+    /// A fully expanded additive share.
     Additive(
         #[serde(
             serialize_with = "crate::serde_compat::ark_se",
@@ -37,9 +41,11 @@ where
         )]
         Vec<F>,
     ),
+    /// A compressed additive share.
     SeededAdditive(SeededType<Vec<F>, U>),
 }
 
+/// This type represents the serialized version of a Rep3 witness. Its share can be either additive or replicated, and in both cases also compressed.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct SerializeableSharedRep3Witness<F: PrimeField, U: Rng + SeedableRng + CryptoRng>
@@ -62,6 +68,7 @@ impl<F: PrimeField, U: Rng + SeedableRng + CryptoRng> SerializeableSharedRep3Wit
 where
     U::Seed: Serialize + for<'a> Deserialize<'a> + Clone + std::fmt::Debug,
 {
+    /// Transforms a shared witness into a serializable version.
     pub fn from_shared_witness(inp: SharedWitness<F, Rep3PrimeFieldShare<F>>) -> Self {
         Self {
             public_inputs: inp.public_inputs,
