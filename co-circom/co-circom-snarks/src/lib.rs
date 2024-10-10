@@ -2,28 +2,25 @@
 //! This crate collects all functionality that is shared between the SNARKs supported by co-circom. At the moment
 //! this is [Groth16](https://eprint.iacr.org/2016/260.pdf) and [PLONK](https://eprint.iacr.org/2019/953.pdf).
 
-use ark_ec::pairing::Pairing;
+use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_types::Witness;
-use mpc_core::protocols::rep3;
-use mpc_core::protocols::rep3::network::Rep3Network;
-use mpc_core::protocols::rep3::Rep3Protocol;
-use mpc_core::protocols::shamir;
-use mpc_core::protocols::shamir::network::ShamirNetwork;
-use mpc_core::protocols::shamir::ShamirProtocol;
-use mpc_core::traits::PrimeFieldMpcProtocol;
+use mpc_core::protocols::{
+    rep3::{self, Rep3PrimeFieldShare},
+    shamir::{self, ShamirPrimeFieldShare},
+};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-type FieldShareVec<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShareVec;
-
 mod serde_compat;
 
+//TODO THE SECRETSHARED TRAIT IS REALLY BAD. WE DO WANT SOMETHING ELSE!
 /// A shared witness in the circom ecosystem.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SharedWitness<T, P: Pairing>
+pub struct SharedWitness<F: PrimeField, S>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     #[serde(
         serialize_with = "crate::serde_compat::ark_se",
@@ -31,20 +28,20 @@ where
     )]
     /// The public inputs (which are the outputs of the circom circuit).
     /// This also includes the constant 1 at position 0.
-    pub public_inputs: Vec<P::ScalarField>,
+    pub public_inputs: Vec<F>,
     #[serde(
         serialize_with = "crate::serde_compat::ark_se",
         deserialize_with = "crate::serde_compat::ark_de"
     )]
     /// The secret-shared witness elements.
-    pub witness: FieldShareVec<T, P>,
+    pub witness: Vec<S>,
 }
 
 /// A shared input for a collaborative circom witness extension.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SharedInput<T, P: Pairing>
+pub struct SharedInput<F: PrimeField, S>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     #[serde(
         serialize_with = "crate::serde_compat::ark_se",
@@ -52,20 +49,20 @@ where
     )]
     /// A map from variable names to the public field elements.
     /// This is a BTreeMap because it implements Canonical(De)Serialize.
-    pub public_inputs: BTreeMap<String, Vec<P::ScalarField>>,
+    pub public_inputs: BTreeMap<String, Vec<F>>,
     #[serde(
         serialize_with = "crate::serde_compat::ark_se",
         deserialize_with = "crate::serde_compat::ark_de"
     )]
     /// A map from variable names to the share of the field element.
     /// This is a BTreeMap because it implements Canonical(De)Serialize.
-    pub shared_inputs: BTreeMap<String, T::FieldShareVec>,
+    pub shared_inputs: BTreeMap<String, Vec<S>>,
 }
 
 /// We manually implement Clone here since it was not derived correctly and it added bounds on T, P which are not needed
-impl<T, P: Pairing> Clone for SharedWitness<T, P>
+impl<F: PrimeField, S> Clone for SharedWitness<F, S>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -76,9 +73,9 @@ where
 }
 
 /// We manually implement Clone here since it was not derived correctly and it added bounds on T, P which are not needed
-impl<T, P: Pairing> Clone for SharedInput<T, P>
+impl<F: PrimeField, S> Clone for SharedInput<F, S>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -88,9 +85,9 @@ where
     }
 }
 
-impl<T, P: Pairing> Default for SharedInput<T, P>
+impl<F: PrimeField, S> Default for SharedInput<F, S>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     fn default() -> Self {
         Self {
@@ -100,18 +97,17 @@ where
     }
 }
 
-impl<T, P> SharedInput<T, P>
+impl<F: PrimeField, S> SharedInput<F, S>
 where
-    P: Pairing,
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
 {
     /// Adds a public input with a given name to the [SharedInput].
-    pub fn add_public_input(&mut self, key: String, elements: Vec<P::ScalarField>) {
+    pub fn add_public_input(&mut self, key: String, elements: Vec<F>) {
         self.public_inputs.insert(key, elements);
     }
 
     /// Adds a shared input with a given name to the [SharedInput].
-    pub fn add_shared_input(&mut self, key: String, elements: T::FieldShareVec) {
+    pub fn add_shared_input(&mut self, key: String, elements: Vec<S>) {
         self.shared_inputs.insert(key, elements);
     }
 
@@ -146,16 +142,16 @@ where
     }
 }
 
-impl<N: Rep3Network, P: Pairing> SharedWitness<Rep3Protocol<P::ScalarField, N>, P> {
+impl<F: PrimeField> SharedWitness<F, Rep3PrimeFieldShare<F>> {
     /// Shares a given witness and public input vector using the Rep3 protocol.
     pub fn share_rep3<R: Rng + CryptoRng>(
-        witness: Witness<P::ScalarField>,
+        witness: Witness<F>,
         num_pub_inputs: usize,
         rng: &mut R,
     ) -> [Self; 3] {
         let public_inputs = &witness.values[..num_pub_inputs];
         let witness = &witness.values[num_pub_inputs..];
-        let [share1, share2, share3] = rep3::utils::share_field_elements(witness, rng);
+        let [share1, share2, share3] = rep3::share_field_elements(witness, rng);
         let witness1 = Self {
             public_inputs: public_inputs.to_vec(),
             witness: share1,
@@ -172,10 +168,10 @@ impl<N: Rep3Network, P: Pairing> SharedWitness<Rep3Protocol<P::ScalarField, N>, 
     }
 }
 
-impl<N: ShamirNetwork, P: Pairing> SharedWitness<ShamirProtocol<P::ScalarField, N>, P> {
+impl<F: PrimeField> SharedWitness<F, ShamirPrimeFieldShare<F>> {
     /// Shares a given witness and public input vector using the Shamir protocol.
     pub fn share_shamir<R: Rng + CryptoRng>(
-        witness: Witness<P::ScalarField>,
+        witness: Witness<F>,
         num_pub_inputs: usize,
         degree: usize,
         num_parties: usize,
@@ -183,7 +179,7 @@ impl<N: ShamirNetwork, P: Pairing> SharedWitness<ShamirProtocol<P::ScalarField, 
     ) -> Vec<Self> {
         let public_inputs = &witness.values[..num_pub_inputs];
         let witness = &witness.values[num_pub_inputs..];
-        let shares = shamir::utils::share_field_elements(witness, degree, num_parties, rng);
+        let shares = shamir::share_field_elements(witness, degree, num_parties, rng);
         shares
             .into_iter()
             .map(|share| Self {

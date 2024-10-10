@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
         toml::from_str(&std::fs::read_to_string(args.config_file).context("opening config file")?)
             .context("parsing config file")?;
 
-    let mut network = MpcNetworkHandler::establish(config.clone()).await?;
+    let network = MpcNetworkHandler::establish(config.clone()).await?;
 
     let mut channels = network.get_serde_bincode_channels().await?;
 

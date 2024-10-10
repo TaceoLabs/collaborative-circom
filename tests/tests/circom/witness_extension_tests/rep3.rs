@@ -3,16 +3,15 @@ use circom_mpc_compiler::CoCircomCompiler;
 use circom_types::Witness;
 use co_circom_snarks::SharedWitness;
 use itertools::izip;
-use mpc_core::protocols::rep3::Rep3Protocol;
 use mpc_core::protocols::rep3::{self};
 use rand::thread_rng;
 use std::fs;
 use std::str::FromStr;
 use std::{fs::File, thread};
-use tests::rep3_network::{PartyTestNetwork, Rep3TestNetwork};
+use tests::rep3_network::Rep3TestNetwork;
 
 use circom_mpc_compiler::CompilerConfig;
-use circom_mpc_vm::mpc_vm::VMConfig;
+use circom_mpc_vm::{mpc_vm::VMConfig, Rep3VmType};
 
 #[allow(dead_code)]
 fn install_tracing() {
@@ -36,9 +35,9 @@ pub struct TestInputs {
 }
 
 fn combine_field_elements_for_vm(
-    a: SharedWitness<Rep3Protocol<ark_bn254::Fr, PartyTestNetwork>, Bn254>,
-    b: SharedWitness<Rep3Protocol<ark_bn254::Fr, PartyTestNetwork>, Bn254>,
-    c: SharedWitness<Rep3Protocol<ark_bn254::Fr, PartyTestNetwork>, Bn254>,
+    a: SharedWitness<ark_bn254::Fr, rep3::arithmetic::FieldShare<ark_bn254::Fr>>,
+    b: SharedWitness<ark_bn254::Fr, rep3::arithmetic::FieldShare<ark_bn254::Fr>>,
+    c: SharedWitness<ark_bn254::Fr, rep3::arithmetic::FieldShare<ark_bn254::Fr>>,
 ) -> Vec<ark_bn254::Fr> {
     let mut res = Vec::with_capacity(a.public_inputs.len() + a.witness.len());
     for (a, b, c) in izip!(a.public_inputs, b.public_inputs, c.public_inputs) {
@@ -46,7 +45,7 @@ fn combine_field_elements_for_vm(
         assert_eq!(b, c);
         res.push(a);
     }
-    res.extend(rep3::utils::combine_field_elements(
+    res.extend(rep3::combine_field_elements(
         a.witness, b.witness, c.witness,
     ));
     res
@@ -104,7 +103,7 @@ macro_rules! run_test {
     ($file: expr, $input: expr) => {{
         //install_tracing();
         let mut rng = thread_rng();
-        let inputs = rep3::utils::share_field_elements_for_vm($input, &mut rng);
+        let inputs = rep3::share_field_elements($input, &mut rng);
         let test_network = Rep3TestNetwork::default();
         let mut threads = vec![];
 
@@ -114,13 +113,19 @@ macro_rules! run_test {
                 compiler_config
                     .link_library
                     .push("../test_vectors/WitnessExtension/tests/libs/".into());
-                let witness_extension =
+                let mut witness_extension =
                     CoCircomCompiler::<Bn254>::parse($file.to_owned(), compiler_config)
                         .unwrap()
                         .to_rep3_vm_with_network(net, VMConfig::default())
                         .unwrap();
                 witness_extension
-                    .run_with_flat(input, 0)
+                    .run_with_flat(
+                        input
+                            .into_iter()
+                            .map(|x| Rep3VmType::Arithmetic(x))
+                            .collect(),
+                        0,
+                    )
                     .unwrap()
                     .into_shared_witness()
             }));

@@ -4,11 +4,10 @@ use circom_types::plonk::ZKey;
 use co_circom_snarks::SharedWitness;
 use std::marker::PhantomData;
 
-use crate::{FieldShare, FieldShareVec, PlonkProofError, PlonkProofResult};
+use crate::{mpc::CircomPlonkProver, PlonkProofError, PlonkProofResult};
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use num_traits::Zero;
 use sha3::{Digest, Keccak256};
 
@@ -23,12 +22,9 @@ where
     phantom_data: PhantomData<P>,
 }
 
-pub(super) struct PolyEval<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(super) poly: FieldShareVec<T, P>,
-    pub(super) eval: FieldShareVec<T, P>,
+pub(super) struct PolyEval<P: Pairing, T: CircomPlonkProver<P>> {
+    pub(super) poly: Vec<T::ArithmeticShare>,
+    pub(super) eval: Vec<T::ArithmeticShare>,
 }
 
 pub(super) struct Domains<F: PrimeField> {
@@ -39,20 +35,14 @@ pub(super) struct Domains<F: PrimeField> {
     pub(super) root_of_unity_pow_2: F,
 }
 
-pub(super) struct PlonkWitness<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(super) struct PlonkWitness<P: Pairing, T: CircomPlonkProver<P>> {
     pub(super) public_inputs: Vec<P::ScalarField>,
-    pub(super) witness: FieldShareVec<T, P>,
-    pub(super) addition_witness: Vec<FieldShare<T, P>>,
+    pub(super) witness: Vec<T::ArithmeticShare>,
+    pub(super) addition_witness: Vec<T::ArithmeticShare>,
 }
 
-pub(super) struct PlonkData<'a, T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(super) witness: PlonkWitness<T, P>,
+pub(super) struct PlonkData<'a, P: Pairing, T: CircomPlonkProver<P>> {
+    pub(super) witness: PlonkWitness<P, T>,
     pub(super) zkey: &'a ZKey<P>,
 }
 
@@ -98,11 +88,11 @@ impl<F: PrimeField> Domains<F> {
         }
     }
 }
-impl<T, P: Pairing> PlonkWitness<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(super) fn new(mut shared_witness: SharedWitness<T, P>, n_additions: usize) -> Self {
+impl<P: Pairing, T: CircomPlonkProver<P>> PlonkWitness<P, T> {
+    pub(super) fn new(
+        mut shared_witness: SharedWitness<P::ScalarField, T::ArithmeticShare>,
+        n_additions: usize,
+    ) -> Self {
         // we have a Groth16 witness, therefore there is a leading one in the witness.
         // we just write zero here instead of one to mirror snarkjs.
         shared_witness.public_inputs[0] = P::ScalarField::zero();

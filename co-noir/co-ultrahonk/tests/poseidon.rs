@@ -1,6 +1,8 @@
 use ark_bn254::Bn254;
-use co_ultrahonk::prelude::{CoUltraHonk, PlainCoBuilder, ProvingKey, SharedBuilderVariable};
-use mpc_core::protocols::plain::PlainDriver;
+use co_ultrahonk::prelude::{
+    CoUltraHonk, PlainCoBuilder, PlainUltraHonkDriver, ProvingKey, SharedBuilderVariable,
+};
+use tokio::runtime;
 use ultrahonk::{
     prelude::{HonkProof, UltraHonk},
     Utils,
@@ -22,13 +24,15 @@ fn poseidon_plaindriver_test() {
     let builder =
         PlainCoBuilder::<Bn254>::create_circuit(constraint_system, 0, witness, true, false);
 
-    let driver = PlainDriver::default();
+    let driver = PlainUltraHonkDriver;
 
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).unwrap();
-    let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
+    let (proving_key, verifying_key) = ProvingKey::create_keys(0, builder, crs).unwrap();
+
+    let runtime = runtime::Builder::new_current_thread().build().unwrap();
 
     let prover = CoUltraHonk::new(driver);
-    let proof = prover.prove(proving_key).unwrap();
+    let proof = runtime.block_on(prover.prove(proving_key)).unwrap();
     let proof_u8 = proof.to_buffer();
 
     let read_proof_u8 = std::fs::read(PROOF_FILE).unwrap();

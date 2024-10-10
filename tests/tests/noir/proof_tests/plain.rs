@@ -5,14 +5,14 @@ use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use co_acvm::solver::PlainCoSolver;
 use co_ultrahonk::prelude::{
-    CoUltraHonk, HonkProof, PlainCoBuilder, ProvingKey, SharedBuilderVariable,
-    UltraCircuitVariable, UltraHonk, Utils,
+    CoUltraHonk, HonkProof, PlainCoBuilder, PlainUltraHonkDriver, ProvingKey,
+    SharedBuilderVariable, UltraCircuitVariable, UltraHonk, Utils,
 };
-use mpc_core::protocols::plain::PlainDriver;
+use tokio::runtime;
 
 fn witness_map_to_witness_vector<P: Pairing>(
     witness_map: WitnessMap<P::ScalarField>,
-) -> Vec<SharedBuilderVariable<PlainDriver<P::ScalarField>, P>> {
+) -> Vec<SharedBuilderVariable<PlainUltraHonkDriver, P>> {
     let mut wv = Vec::new();
     let mut index = 0;
     for (w, f) in witness_map.into_iter() {
@@ -31,7 +31,7 @@ fn witness_map_to_witness_vector<P: Pairing>(
 
 fn convert_witness_plain<P: Pairing>(
     mut witness_stack: WitnessStack<P::ScalarField>,
-) -> Vec<SharedBuilderVariable<PlainDriver<P::ScalarField>, P>> {
+) -> Vec<SharedBuilderVariable<PlainUltraHonkDriver, P>> {
     let witness_map = witness_stack
         .pop()
         .expect("Witness should be present")
@@ -53,13 +53,15 @@ fn proof_test(name: &str) {
     let builder =
         PlainCoBuilder::<Bn254>::create_circuit(constraint_system, 0, witness, true, false);
 
-    let driver = PlainDriver::default();
+    let driver = PlainUltraHonkDriver;
 
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
-    let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
+    let (proving_key, verifying_key) = ProvingKey::create_keys(0, builder, crs).unwrap();
+
+    let runtime = runtime::Builder::new_current_thread().build().unwrap();
 
     let prover = CoUltraHonk::new(driver);
-    let proof = prover.prove(proving_key).unwrap();
+    let proof = runtime.block_on(prover.prove(proving_key)).unwrap();
     let proof_u8 = proof.to_buffer();
 
     let read_proof_u8 = std::fs::read(&proof_file).unwrap();
@@ -88,13 +90,15 @@ fn witness_and_proof_test(name: &str) {
     let builder =
         PlainCoBuilder::<Bn254>::create_circuit(constraint_system, 0, witness, true, false);
 
-    let driver = PlainDriver::default();
+    let driver = PlainUltraHonkDriver;
 
     let crs = ProvingKey::get_crs(&builder, CRS_PATH_G1, CRS_PATH_G2).expect("failed to get crs");
-    let (proving_key, verifying_key) = ProvingKey::create_keys(&driver, builder, crs).unwrap();
+    let (proving_key, verifying_key) = ProvingKey::create_keys(0, builder, crs).unwrap();
+
+    let runtime = runtime::Builder::new_current_thread().build().unwrap();
 
     let prover = CoUltraHonk::new(driver);
-    let proof = prover.prove(proving_key).unwrap();
+    let proof = runtime.block_on(prover.prove(proving_key)).unwrap();
     let proof_u8 = proof.to_buffer();
 
     let read_proof_u8 = std::fs::read(&proof_file).unwrap();

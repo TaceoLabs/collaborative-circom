@@ -7,6 +7,8 @@ pub(crate) mod poseidon2_external_relation;
 pub(crate) mod poseidon2_internal_relation;
 pub(crate) mod ultra_arithmetic_relation;
 
+use crate::mpc::NoirUltraHonkProver;
+
 use super::{
     types::{ProverUnivariates, RelationParameters},
     univariates::SharedUnivariate,
@@ -18,17 +20,13 @@ use delta_range_constraint_relation::{
 };
 use elliptic_relation::{EllipticRelation, EllipticRelationAcc};
 use logderiv_lookup_relation::{LogDerivLookupRelation, LogDerivLookupRelationAcc};
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use permutation_relation::{UltraPermutationRelation, UltraPermutationRelationAcc};
 use poseidon2_external_relation::{Poseidon2ExternalRelation, Poseidon2ExternalRelationAcc};
 use poseidon2_internal_relation::{Poseidon2InternalRelation, Poseidon2InternalRelationAcc};
 use ultra_arithmetic_relation::{UltraArithmeticRelation, UltraArithmeticRelationAcc};
 use ultrahonk::prelude::{HonkCurve, HonkProofResult, TranscriptFieldType, Univariate};
 
-pub(crate) trait Relation<T, P: HonkCurve<TranscriptFieldType>>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(crate) trait Relation<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> {
     type Acc: Default;
     const SKIPPABLE: bool;
 
@@ -39,7 +37,7 @@ where
     }
 
     fn skip(input: &ProverUnivariates<T, P>) -> bool;
-    fn accumulate(
+    async fn accumulate(
         driver: &mut T,
         univariate_accumulator: &mut Self::Acc,
         input: &ProverUnivariates<T, P>,
@@ -57,10 +55,16 @@ pub(crate) const NUM_SUBRELATIONS: usize = UltraArithmeticRelation::NUM_RELATION
     + Poseidon2ExternalRelation::NUM_RELATIONS
     + Poseidon2InternalRelation::NUM_RELATIONS;
 
-pub(crate) struct AllRelationAcc<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub const CRAND_PAIRS_FACTOR: usize = AuxiliaryRelation::CRAND_PAIRS_FACTOR
+    + DeltaRangeConstraintRelation::CRAND_PAIRS_FACTOR
+    + EllipticRelation::CRAND_PAIRS_FACTOR
+    + LogDerivLookupRelation::CRAND_PAIRS_FACTOR
+    + UltraPermutationRelation::CRAND_PAIRS_FACTOR
+    + Poseidon2ExternalRelation::CRAND_PAIRS_FACTOR
+    + Poseidon2InternalRelation::CRAND_PAIRS_FACTOR
+    + UltraArithmeticRelation::CRAND_PAIRS_FACTOR;
+
+pub(crate) struct AllRelationAcc<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) r_arith: UltraArithmeticRelationAcc<T, P>,
     pub(crate) r_perm: UltraPermutationRelationAcc<T, P>,
     pub(crate) r_delta: DeltaRangeConstraintRelationAcc<T, P>,
@@ -71,10 +75,7 @@ where
     pub(crate) r_pos_int: Poseidon2InternalRelationAcc<T, P>,
 }
 
-impl<T, P: Pairing> Default for AllRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for AllRelationAcc<T, P> {
     fn default() -> Self {
         Self {
             r_arith: Default::default(),
@@ -89,10 +90,7 @@ where
     }
 }
 
-impl<T, P: Pairing> AllRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> AllRelationAcc<T, P> {
     pub(crate) fn scale(
         &mut self,
         driver: &mut T,

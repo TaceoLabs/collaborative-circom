@@ -52,7 +52,7 @@ pub struct ZKey<P: Pairing> {
     /// The domain size (power of two)
     pub domain_size: usize,
     /// ld(domain size)
-    pub power: usize,
+    pub pow: usize,
     /// The amounts of additions
     pub n_additions: usize,
     /// The amounts of constraints
@@ -295,7 +295,7 @@ where
             n_vars,
             n_public,
             domain_size,
-            power: header.power,
+            pow: header.power,
             n_additions,
             n_constraints,
             verifying_key: header.verifying_key,

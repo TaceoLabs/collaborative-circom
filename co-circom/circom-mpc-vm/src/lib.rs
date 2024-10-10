@@ -12,7 +12,10 @@
 //! run-time optimization. We eagerly communicate after every non-linear operation and perform many unnecessary conversions between A and B shares.
 //!
 //! Major changes and optimizations are expected in the near future.
+
 mod accelerator;
+/// This module contains the MPC-VM witness extension trait
+pub mod mpc;
 /// This module contains the MPC-VM
 pub mod mpc_vm;
 /// Defines the bytecode for the MPC-VM
@@ -20,3 +23,5 @@ pub mod op_codes;
 mod stack;
 /// Defines the types for the MPC-VM, including [template declaration](types::TemplateDecl) and [function declarations](types::FunDecl).
 pub mod types;
+
+pub use mpc::rep3::Rep3VmType;

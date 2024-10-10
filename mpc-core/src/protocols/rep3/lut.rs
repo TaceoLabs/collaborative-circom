@@ -1,13 +1,36 @@
+//! Lookup Table
+//!
+//! This module contains implementation of a LUT
+
 use ark_ff::PrimeField;
 use itertools::izip;
 
-use crate::traits::{LookupTableProvider, PrimeFieldMpcProtocol};
+use crate::{
+    lut::LookupTableProvider,
+    protocols::rep3::{arithmetic, binary, conversion},
+};
 
-use super::{network::Rep3Network, Rep3BigUintShare, Rep3PrimeFieldShare, Rep3Protocol};
+use super::{
+    network::{IoContext, Rep3Network},
+    IoResult, Rep3PrimeFieldShare,
+};
 
-pub type MpcMap<F> = Vec<(F, F)>;
+type MpcMap<F> = Vec<(F, F)>;
 
-impl<F: PrimeField, N: Rep3Network> LookupTableProvider<F> for Rep3Protocol<F, N> {
+/// Rep3 lookup table
+pub struct NaiveRep3LookupTable<N: Rep3Network> {
+    io_context: IoContext<N>,
+}
+
+impl<N: Rep3Network> NaiveRep3LookupTable<N> {
+    /// Construct a new [`NaiveRep3LookupTable`]
+    pub fn new(io_context: IoContext<N>) -> Self {
+        Self { io_context }
+    }
+}
+
+impl<F: PrimeField, N: Rep3Network> LookupTableProvider<F> for NaiveRep3LookupTable<N> {
+    type SecretShare = Rep3PrimeFieldShare<F>;
     type SecretSharedSet = Vec<Rep3PrimeFieldShare<F>>;
 
     type SecretSharedMap = MpcMap<Rep3PrimeFieldShare<F>>;
@@ -15,41 +38,56 @@ impl<F: PrimeField, N: Rep3Network> LookupTableProvider<F> for Rep3Protocol<F, N
     // Maybe give every set a dedicated ID/String to re-identify in debugging
     fn init_set(
         &self,
-        values: impl IntoIterator<Item = Self::FieldShare>,
+        values: impl IntoIterator<Item = Self::SecretShare>,
     ) -> Self::SecretSharedSet {
         tracing::debug!("initiating LUT-set");
         values.into_iter().collect()
     }
 
-    fn contains_set(
+    async fn contains_set(
         &mut self,
-        needle: &Self::FieldShare,
+        needle: &Self::SecretShare,
         set: &Self::SecretSharedSet,
-    ) -> eyre::Result<Self::FieldShare> {
+    ) -> IoResult<Self::SecretShare> {
         tracing::debug!("checking if value is in set of size {}", set.len());
-        //first get a vector of true/false
-        let equals_vec = set
-            .iter()
-            .map(|ele| self.equals_bit(needle, ele))
-            .collect::<eyre::Result<Vec<_>>>()?;
+        // first get a vector of true/false
+
+        // if we can easily fork the io context we can do it like that. Even better would be a batched
+        // version
+        //       let equals_vec = set
+        //           .iter()
+        //           .map(|ele| arithmetic::equals_bit(*needle, *ele, &mut self.io_context))
+        //           .collect::<FuturesOrdered<_>>()
+        //           .collect::<Vec<_>>()
+        //           .await
+        //           .into_iter()
+        //           .collect::<IoResult<Vec<_>>>()?;
+        let mut equals_vec = Vec::with_capacity(set.len());
+        for ele in set.iter() {
+            let bit = arithmetic::eq_bit(*needle, *ele, &mut self.io_context).await?;
+            equals_vec.push(bit);
+        }
+
         tracing::debug!("got binary equals vec now or tree..");
         //or tree to get result
-        self.or_tree(equals_vec)
+        let binary_result = binary::or_tree(equals_vec, &mut self.io_context).await?;
+        tracing::debug!("one last conversion from binary to arithmetic...");
+        conversion::b2a(&binary_result, &mut self.io_context).await
     }
 
     fn init_map(
         &self,
-        values: impl IntoIterator<Item = (Self::FieldShare, Self::FieldShare)>,
+        values: impl IntoIterator<Item = (Self::SecretShare, Self::SecretShare)>,
     ) -> Self::SecretSharedMap {
         tracing::debug!("initiating LUT-map");
         values.into_iter().collect()
     }
 
-    fn get_from_lut(
+    async fn get_from_lut(
         &mut self,
-        needle: &Self::FieldShare,
+        needle: Self::SecretShare,
         map: &Self::SecretSharedMap,
-    ) -> eyre::Result<Self::FieldShare> {
+    ) -> IoResult<Self::SecretShare> {
         // make some experiments which is faster
         // a single for each or multiple chained iterators...
         //
@@ -57,85 +95,40 @@ impl<F: PrimeField, N: Rep3Network> LookupTableProvider<F> for Rep3Protocol<F, N
         tracing::debug!("doing read on LUT-map of size {}", map.len());
         tracing::debug!("get random zeros for blinding..");
         let mut zeros_a = Vec::with_capacity(map.len());
-        zeros_a.resize_with(map.len(), || self.rngs.rand.masking_field_element::<F>());
-        self.network.send_next_many(&zeros_a)?;
-        let zeros_b = self.network.recv_prev_many::<F>()?;
+        zeros_a.resize_with(map.len(), || {
+            self.io_context.rngs.rand.masking_field_element::<F>()
+        });
+        let zeros_b = self.io_context.network.reshare_many(&zeros_a).await?;
         tracing::debug!("now perform equals and cmux...");
-        let mut result = Rep3PrimeFieldShare::default();
+        let mut result = Self::SecretShare::default();
         for ((key, map), zero_a, zero_b) in
             izip!(map.iter(), zeros_a.into_iter(), zeros_b.into_iter())
         {
             // this is super slow - we can batch it?
-            let zero_share = Rep3PrimeFieldShare::new(zero_a, zero_b);
-            let equals = self.equals(needle, key)?;
-            let cmux = self.cmux(&equals, map, &zero_share)?;
-            result = self.add(&result, &cmux);
+            let zero_share = Self::SecretShare::new(zero_a, zero_b);
+            let equals = arithmetic::eq(needle, *key, &mut self.io_context).await?;
+            let cmux = arithmetic::cmux(equals, *map, zero_share, &mut self.io_context).await?;
+            result = arithmetic::add(result, cmux);
         }
         tracing::debug!("got a result!");
         Ok(result)
     }
 
-    fn write_to_lut(
+    async fn write_to_lut(
         &mut self,
-        needle: Self::FieldShare,
-        value: Self::FieldShare,
+        needle: Self::SecretShare,
+        value: Self::SecretShare,
         map: &mut Self::SecretSharedMap,
-    ) -> eyre::Result<()> {
+    ) -> IoResult<()> {
         tracing::debug!("doing write on LUT-map of size {}", map.len());
         // we do not need any zeros here
         for (key, map) in map.iter_mut() {
             // this is super slow - we can batch it?
-            let equals = self.equals(&needle, key)?;
-            let cmux = self.cmux(&equals, &value, map)?;
+            let equals = arithmetic::eq(needle, *key, &mut self.io_context).await?;
+            let cmux = arithmetic::cmux(equals, value, *map, &mut self.io_context).await?;
             *map = cmux;
         }
         tracing::debug!("we are done");
         Ok(())
-    }
-}
-
-impl<F: PrimeField, N: Rep3Network> Rep3Protocol<F, N> {
-    fn single_or(
-        &mut self,
-        lhs: Rep3BigUintShare,
-        rhs: Rep3BigUintShare,
-    ) -> eyre::Result<Rep3BigUintShare> {
-        let mut xor = &lhs ^ &rhs;
-        let and = self.and(lhs, rhs, F::MODULUS_BIT_SIZE as usize)?;
-        xor ^= &and;
-        Ok(xor)
-    }
-    fn or_tree(
-        &mut self,
-        mut inputs: Vec<Rep3BigUintShare>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let mut num = inputs.len();
-
-        tracing::debug!("starting or tree over {} elements", inputs.len());
-        while num > 1 {
-            tracing::trace!("binary tree still has {} elements", num);
-            let mod_ = num & 1;
-            num >>= 1;
-
-            let (a_vec, tmp) = inputs.split_at(num);
-            let (b_vec, leftover) = tmp.split_at(num);
-
-            //this is super slow as it is not batched. For now this is ok, but not for the future
-            let mut res = a_vec
-                .iter()
-                .zip(b_vec)
-                .map(|(a, b)| self.single_or(a.clone(), b.clone()))
-                .collect::<eyre::Result<Vec<_>>>()?;
-
-            res.extend_from_slice(leftover);
-            inputs = res;
-
-            num += mod_;
-        }
-        let bin_result = inputs[0].clone();
-        tracing::debug!("got binary result - now b2a..");
-        let result = self.b2a(bin_result)?;
-        tracing::debug!("we did it!");
-        Ok(result)
     }
 }

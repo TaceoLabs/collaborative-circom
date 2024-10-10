@@ -1,7 +1,7 @@
 use acir::native_types::{WitnessMap, WitnessStack};
 use ark_ff::PrimeField;
+use co_acvm::Rep3AcvmType;
 use itertools::izip;
-use mpc_core::protocols::rep3::witness_extension_impl::Rep3VmType;
 
 mod plain_solver;
 mod rep3;
@@ -81,9 +81,9 @@ macro_rules! add_rep3_acvm_test {
 }
 
 fn combine_field_elements_for_acvm<F: PrimeField>(
-    mut a: WitnessStack<Rep3VmType<F>>,
-    mut b: WitnessStack<Rep3VmType<F>>,
-    mut c: WitnessStack<Rep3VmType<F>>,
+    mut a: WitnessStack<Rep3AcvmType<F>>,
+    mut b: WitnessStack<Rep3AcvmType<F>>,
+    mut c: WitnessStack<Rep3AcvmType<F>>,
 ) -> WitnessStack<F> {
     let mut res = WitnessStack::default();
     assert_eq!(a.length(), b.length());
@@ -102,15 +102,15 @@ fn combine_field_elements_for_acvm<F: PrimeField>(
             assert_eq!(witness_a, witness_b);
             assert_eq!(witness_b, witness_c);
             let reconstructed = match (share_a, share_b, share_c) {
-                (Rep3VmType::Public(a), Rep3VmType::Public(b), Rep3VmType::Public(c)) => {
+                (Rep3AcvmType::Public(a), Rep3AcvmType::Public(b), Rep3AcvmType::Public(c)) => {
                     if a == b && b == c {
                         a
                     } else {
                         panic!("must be all public")
                     }
                 }
-                (Rep3VmType::Shared(a), Rep3VmType::Shared(b), Rep3VmType::Shared(c)) => {
-                    mpc_core::protocols::rep3::utils::combine_field_element(a, b, c)
+                (Rep3AcvmType::Shared(a), Rep3AcvmType::Shared(b), Rep3AcvmType::Shared(c)) => {
+                    mpc_core::protocols::rep3::combine_field_element(a, b, c)
                 }
                 _ => unimplemented!(),
             };

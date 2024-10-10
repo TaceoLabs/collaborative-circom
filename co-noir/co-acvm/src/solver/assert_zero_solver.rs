@@ -1,8 +1,7 @@
 use acir::{acir_field::GenericFieldElement, native_types::Expression, AcirField};
 use ark_ff::PrimeField;
-use mpc_core::traits::NoirWitnessExtensionProtocol;
 
-use crate::solver::solver_utils;
+use crate::{mpc::NoirWitnessExtensionProtocol, solver::solver_utils};
 
 use super::{CoAcvmResult, CoSolver};
 
@@ -40,12 +39,12 @@ where
                     }
                     (Some(lhs), None) => {
                         tracing::trace!("partially solving mul term...");
-                        let partly_solved = self.driver.acvm_mul_with_public(c.into_repr(), lhs)?;
+                        let partly_solved = self.driver.acvm_mul_with_public(c.into_repr(), lhs);
                         acc.linear_combinations.push((partly_solved, *rhs));
                     }
                     (None, Some(rhs)) => {
                         tracing::trace!("partially solving mul term...");
-                        let partly_solved = self.driver.acvm_mul_with_public(c.into_repr(), rhs)?;
+                        let partly_solved = self.driver.acvm_mul_with_public(c.into_repr(), rhs);
                         acc.linear_combinations.push((partly_solved, *lhs));
                     }
                     (None, None) => Err(eyre::eyre!(

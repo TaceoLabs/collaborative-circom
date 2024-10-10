@@ -38,9 +38,23 @@ impl<R, W, C> Channel<R, W, C> {
             read_conn: FramedRead::new(read_half, codec),
         }
     }
+
     /// Split Connection into a ([`WriteChannel`],[`ReadChannel`]) pair.
     pub fn split(self) -> (WriteChannel<W, C>, ReadChannel<R, C>) {
         (self.write_conn, self.read_conn)
+    }
+
+    /// Join ([`WriteChannel`],[`ReadChannel`]) pair back into a [`Channel`].
+    pub fn join(write_conn: WriteChannel<W, C>, read_conn: ReadChannel<R, C>) -> Self {
+        Self {
+            write_conn,
+            read_conn,
+        }
+    }
+
+    /// Returns mutable reference to the ([`WriteChannel`],[`ReadChannel`]) pair.
+    pub fn inner_ref(&mut self) -> (&mut WriteChannel<W, C>, &mut ReadChannel<R, C>) {
+        (&mut self.write_conn, &mut self.read_conn)
     }
 
     /// Closes the channel, flushing the write buffer and checking that there is no unread data.

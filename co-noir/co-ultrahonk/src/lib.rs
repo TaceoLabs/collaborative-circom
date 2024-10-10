@@ -1,22 +1,20 @@
 pub(crate) mod co_decider;
 pub(crate) mod co_oink;
+pub(crate) mod mpc;
 pub(crate) mod parse;
 pub mod prelude;
 pub(crate) mod prover;
 pub(crate) mod types;
 
 use ark_ec::pairing::Pairing;
-use mpc_core::{
-    protocols::plain::PlainDriver,
-    traits::{EcMpcProtocol, MSMProvider, PrimeFieldMpcProtocol},
-};
+use mpc::{plain::PlainUltraHonkDriver, NoirUltraHonkProver};
 use parse::builder_variable::SharedBuilderVariable;
 use ultrahonk::prelude::ProverCrs;
 
-impl<P: Pairing> SharedBuilderVariable<PlainDriver<P::ScalarField>, P> {
+impl<P: Pairing> SharedBuilderVariable<PlainUltraHonkDriver, P> {
     pub fn promote_public_witness_vector(
         witness: Vec<P::ScalarField>,
-    ) -> Vec<SharedBuilderVariable<PlainDriver<P::ScalarField>, P>> {
+    ) -> Vec<SharedBuilderVariable<PlainUltraHonkDriver, P>> {
         witness
             .into_iter()
             .map(SharedBuilderVariable::Public)
@@ -29,36 +27,27 @@ pub(crate) const NUM_ALPHAS: usize = ultrahonk::NUM_ALPHAS;
 // AZTEC TODO(https://github.com/AztecProtocol/barretenberg/issues/1046): Remove the need for const sized proofs
 pub(crate) const CONST_PROOF_SIZE_LOG_N: usize = ultrahonk::CONST_PROOF_SIZE_LOG_N;
 pub(crate) const N_MAX: usize = ultrahonk::N_MAX;
-
-// TACEO TODO do not forget to remove this
-type FieldShareVec<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShareVec;
-pub(crate) type FieldShare<T, P> =
-    <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShare;
-pub(crate) type PointShare<T, C> = <T as EcMpcProtocol<C>>::PointShare;
+pub const OINK_CRAND_PAIRS_FACTOR_N: usize = co_oink::CRAND_PAIRS_FACTOR_N;
+pub const OINK_CRAND_PAIRS_FACTOR_N_MINUS_ONE: usize = co_oink::CRAND_PAIRS_FACTOR_N_MINUS_ONE;
+pub const OINK_CRAND_PAIRS_CONST: usize = co_oink::CRAND_PAIRS_CONST;
+pub const SUMCHECK_ROUND_CRAND_PAIRS_FACTOR: usize = co_decider::relations::CRAND_PAIRS_FACTOR;
+pub const MAX_PARTIAL_RELATION_LENGTH: usize = co_decider::types::MAX_PARTIAL_RELATION_LENGTH;
 
 pub(crate) struct CoUtils {}
 
 impl CoUtils {
-    pub(crate) fn commit<T, P: Pairing>(
-        driver: &mut T,
-        poly: &[FieldShare<T, P>],
+    pub(crate) fn commit<T: NoirUltraHonkProver<P>, P: Pairing>(
+        poly: &[T::ArithmeticShare],
         crs: &ProverCrs<P>,
-    ) -> PointShare<T, P::G1>
-    where
-        T: MSMProvider<P::G1>,
-    {
+    ) -> T::PointShareG1 {
         let len = poly.len();
-        let poly_vec = FieldShareVec::<T, P>::from(poly.to_vec());
-        MSMProvider::msm_public_points(driver, &crs.monomials[..len], &poly_vec)
+        T::msm_public_points_g1(&crs.monomials[..len], poly)
     }
 
-    pub(crate) fn batch_invert<T, P: Pairing>(
+    pub(crate) async fn batch_invert<T: NoirUltraHonkProver<P>, P: Pairing>(
         driver: &mut T,
-        poly: &mut [FieldShare<T, P>],
-    ) -> std::io::Result<()>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
-        driver.inv_many_in_place(poly)
+        poly: &mut [T::ArithmeticShare],
+    ) -> std::io::Result<()> {
+        driver.inv_many_in_place(poly).await
     }
 }

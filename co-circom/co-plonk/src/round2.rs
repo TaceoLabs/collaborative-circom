@@ -1,67 +1,29 @@
 use crate::{
+    mpc::CircomPlonkProver,
     plonk_utils,
     round1::{Round1Challenges, Round1Polys, Round1Proof},
     round3::Round3,
     types::{Domains, Keccak256Transcript, PlonkData, PolyEval},
-    FieldShareVec, PlonkProofError, PlonkProofResult,
+    PlonkProofError, PlonkProofResult,
 };
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use circom_types::plonk::ZKey;
-use mpc_core::traits::{
-    FFTProvider, FieldShareVecTrait, MSMProvider, PairingEcMpcProtocol, PrimeFieldMpcProtocol,
-};
 use num_traits::One;
-
-// To reduce the number of communication rounds, we implement the array_prod_mul macro according to https://www.usenix.org/system/files/sec22-ozdemir.pdf, p11 first paragraph.
-// TODO parallelize these? With a different network structure this might not be needed though
-macro_rules! array_prod_mul {
-    ($driver: expr, $inp: expr) => {{
-        // Do the multiplications of inp[i] * inp[i-1] in constant rounds
-        let len = $inp.len();
-        let r = (0..=len)
-            .map(|_| $driver.rand())
-            .collect::<Result<Vec<_>, _>>()?;
-        let r_inv = $driver.inv_many(&r)?;
-        let r_inv0 = vec![r_inv[0].clone(); len];
-        let mut unblind = $driver.mul_many(&r_inv0, &r[1..])?;
-
-        let mul = $driver.mul_many(&r[..len], &$inp)?;
-        let mut open = $driver.mul_open_many(&mul, &r_inv[1..])?;
-
-        for i in 1..open.len() {
-            open[i] = open[i] * open[i - 1];
-        }
-
-        for (unblind, open) in unblind.iter_mut().zip(open.iter()) {
-            *unblind = $driver.mul_with_public(open, unblind);
-        }
-        unblind
-    }};
-}
+use tracing::instrument;
 
 // Round 2 of https://eprint.iacr.org/2019/953.pdf (page 28)
-pub(super) struct Round2<'a, T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+pub(super) struct Round2<'a, P: Pairing, T: CircomPlonkProver<P>> {
     pub(super) driver: T,
     pub(super) domains: Domains<P::ScalarField>,
-    pub(super) challenges: Round1Challenges<T, P>,
+    pub(super) challenges: Round1Challenges<P, T>,
     pub(super) proof: Round1Proof<P>,
-    pub(super) polys: Round1Polys<T, P>,
-    pub(super) data: PlonkData<'a, T, P>,
+    pub(super) polys: Round1Polys<P, T>,
+    pub(super) data: PlonkData<'a, P, T>,
 }
 
-pub(super) struct Round2Challenges<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(super) b: [T::FieldShare; 11],
+pub(super) struct Round2Challenges<P: Pairing, T: CircomPlonkProver<P>> {
+    pub(super) b: [T::ArithmeticShare; 11],
     pub(super) beta: P::ScalarField,
     pub(super) gamma: P::ScalarField,
 }
@@ -73,15 +35,12 @@ pub(super) struct Round2Proof<P: Pairing> {
     pub(super) commit_z: P::G1,
 }
 
-pub(super) struct Round2Polys<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(super) buffer_a: FieldShareVec<T, P>,
-    pub(super) poly_eval_a: PolyEval<T, P>,
-    pub(super) poly_eval_b: PolyEval<T, P>,
-    pub(super) poly_eval_c: PolyEval<T, P>,
-    pub(super) z: PolyEval<T, P>,
+pub(super) struct Round2Polys<P: Pairing, T: CircomPlonkProver<P>> {
+    pub(super) buffer_a: Vec<T::ArithmeticShare>,
+    pub(super) poly_eval_a: PolyEval<P, T>,
+    pub(super) poly_eval_b: PolyEval<P, T>,
+    pub(super) poly_eval_c: PolyEval<P, T>,
+    pub(super) z: PolyEval<P, T>,
 }
 
 impl<P: Pairing> std::fmt::Display for Round2Proof<P> {
@@ -89,12 +48,9 @@ impl<P: Pairing> std::fmt::Display for Round2Proof<P> {
         write!(f, "Round2Proof(z: {})", self.commit_z.into_affine())
     }
 }
-impl<T, P: Pairing> Round2Challenges<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<P: Pairing, T: CircomPlonkProver<P>> Round2Challenges<P, T> {
     fn new(
-        round1_challenges: Round1Challenges<T, P>,
+        round1_challenges: Round1Challenges<P, T>,
         beta: P::ScalarField,
         gamma: P::ScalarField,
     ) -> Self {
@@ -117,11 +73,8 @@ impl<P: Pairing> Round2Proof<P> {
     }
 }
 
-impl<T, P: Pairing> Round2Polys<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    fn new(polys: Round1Polys<T, P>, z: PolyEval<T, P>) -> Self {
+impl<P: Pairing, T: CircomPlonkProver<P>> Round2Polys<P, T> {
+    fn new(polys: Round1Polys<P, T>, z: PolyEval<P, T>) -> Self {
         Self {
             buffer_a: polys.buffer_a,
             poly_eval_a: polys.a,
@@ -133,68 +86,74 @@ where
 }
 
 // Round 2 of https://eprint.iacr.org/2019/953.pdf (page 28)
-impl<'a, T, P: Pairing> Round2<'a, T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+impl<'a, P: Pairing, T: CircomPlonkProver<P>> Round2<'a, P, T> {
     // Computes the permutation polynomial z(X) (see https://eprint.iacr.org/2019/953.pdf)
     // To reduce the number of communication rounds, we implement the array_prod_mul macro according to https://www.usenix.org/system/files/sec22-ozdemir.pdf, p11 first paragraph.
-    fn compute_z(
+    #[instrument(level = "debug", name = "compute z", skip_all)]
+    async fn compute_z(
         driver: &mut T,
         zkey: &ZKey<P>,
         domains: &Domains<P::ScalarField>,
-        challenges: &Round2Challenges<T, P>,
-        polys: &Round1Polys<T, P>,
-    ) -> PlonkProofResult<PolyEval<T, P>> {
-        tracing::debug!("computing z polynomial...");
+        challenges: &Round2Challenges<P, T>,
+        polys: &Round1Polys<P, T>,
+    ) -> PlonkProofResult<PolyEval<P, T>> {
         let pow_root_of_unity = domains.root_of_unity_pow;
-        let mut w = P::ScalarField::one();
         let mut n1 = Vec::with_capacity(zkey.domain_size);
         let mut n2 = Vec::with_capacity(zkey.domain_size);
         let mut n3 = Vec::with_capacity(zkey.domain_size);
         let mut d1 = Vec::with_capacity(zkey.domain_size);
         let mut d2 = Vec::with_capacity(zkey.domain_size);
         let mut d3 = Vec::with_capacity(zkey.domain_size);
+        let party_id = driver.get_party_id();
+        let mut w = P::ScalarField::one();
+        // TODO: multithread me - this is not so easy as other
+        // parts as we go through the roots of unity but it is doable
+        let num_den_span = tracing::info_span!("compute num/den").entered();
         for i in 0..zkey.domain_size {
-            let a = polys.buffer_a.index(i);
-            let b = polys.buffer_b.index(i);
-            let c = polys.buffer_c.index(i);
+            let a = &polys.buffer_a[i];
+            let b = &polys.buffer_b[i];
+            let c = &polys.buffer_c[i];
 
             // Z(X) := numArr / denArr
             // numArr := (a + beta·ω + gamma)(b + beta·ω·k1 + gamma)(c + beta·ω·k2 + gamma)
             let betaw = challenges.beta * w;
 
-            let n1_ = driver.add_with_public(&betaw, &a);
-            let n1_ = driver.add_with_public(&challenges.gamma, &n1_);
+            let n1_ = T::add_with_public(party_id, *a, betaw);
+            let n1_ = T::add_with_public(party_id, n1_, challenges.gamma);
 
             let tmp = zkey.verifying_key.k1 * betaw;
-            let n2_ = driver.add_with_public(&tmp, &b);
-            let n2_ = driver.add_with_public(&challenges.gamma, &n2_);
+            let n2_ = T::add_with_public(party_id, *b, tmp);
+            let n2_ = T::add_with_public(party_id, n2_, challenges.gamma);
 
             let tmp = zkey.verifying_key.k2 * betaw;
-            let n3_ = driver.add_with_public(&tmp, &c);
-            let n3_ = driver.add_with_public(&challenges.gamma, &n3_);
+            let n3_ = T::add_with_public(party_id, *c, tmp);
+            let n3_ = T::add_with_public(party_id, n3_, challenges.gamma);
 
             n1.push(n1_);
             n2.push(n2_);
             n3.push(n3_);
 
             // denArr := (a + beta·sigma1 + gamma)(b + beta·sigma2 + gamma)(c + beta·sigma3 + gamma)
-            let d1_ =
-                driver.add_with_public(&(challenges.beta * zkey.s1_poly.evaluations[i * 4]), &a);
-            let d1_ = driver.add_with_public(&challenges.gamma, &d1_);
+            let d1_ = T::add_with_public(
+                party_id,
+                *a,
+                challenges.beta * zkey.s1_poly.evaluations[i * 4],
+            );
+            let d1_ = T::add_with_public(party_id, d1_, challenges.gamma);
 
-            let d2_ =
-                driver.add_with_public(&(challenges.beta * zkey.s2_poly.evaluations[i * 4]), &b);
-            let d2_ = driver.add_with_public(&challenges.gamma, &d2_);
+            let d2_ = T::add_with_public(
+                party_id,
+                *b,
+                challenges.beta * zkey.s2_poly.evaluations[i * 4],
+            );
+            let d2_ = T::add_with_public(party_id, d2_, challenges.gamma);
 
-            let d3_ =
-                driver.add_with_public(&(challenges.beta * zkey.s3_poly.evaluations[i * 4]), &c);
-            let d3_ = driver.add_with_public(&challenges.gamma, &d3_);
+            let d3_ = T::add_with_public(
+                party_id,
+                *c,
+                challenges.beta * zkey.s3_poly.evaluations[i * 4],
+            );
+            let d3_ = T::add_with_public(party_id, d3_, challenges.gamma);
 
             d1.push(d1_);
             d2.push(d2_);
@@ -203,45 +162,38 @@ where
             w *= &pow_root_of_unity;
         }
 
-        // TODO parallelize these? With a different network structure this might not be needed though
-        let num = driver.mul_many(&n1, &n2)?;
-        let num = driver.mul_many(&num, &n3)?;
-        let den = driver.mul_many(&d1, &d2)?;
-        let den = driver.mul_many(&den, &d3)?;
+        num_den_span.exit();
 
-        // TODO parallelize these? With a different network structure this might not be needed though
-        // Do the multiplications of num[i] * num[i-1] and den[i] * den[i-1] in constant rounds
-        let num = array_prod_mul!(driver, num);
-        let den = array_prod_mul!(driver, den);
-
-        // Compute the inverse of denArr to compute in the next command the
-        // division numArr/denArr by multiplying num · 1/denArr
-        let den = driver.inv_many(&den)?;
-        let mut buffer_z = driver.mul_many(&num, &den)?;
+        let batched_mul_span = tracing::info_span!("buffer z network round").entered();
+        let (num, den) = driver.array_prod_mul2(&n1, &n2, &n3, &d1, &d2, &d3).await?;
+        let mut buffer_z = driver.mul_vec(&num, &den).await?;
         buffer_z.rotate_right(1); // Required by SNARKJs/Plonk
-        let buffer_z = buffer_z.into();
+        batched_mul_span.exit();
+
+        let fft_span = tracing::info_span!("fft-ifft for z(x)").entered();
 
         // Compute polynomial coefficients z(X) from buffer_z
-        let poly_z = driver.ifft(&buffer_z, &domains.domain);
+        let mut poly_z = T::ifft(&buffer_z, &domains.domain);
 
         // Compute extended evaluations of z(X) polynomial
-        let eval_z = driver.fft(poly_z.to_owned(), &domains.extended_domain);
-
-        let poly_z = plonk_utils::blind_coefficients::<T, P>(driver, &poly_z, &challenges.b[6..9]);
+        let eval_z = T::fft(&poly_z, &domains.extended_domain);
+        plonk_utils::blind_coefficients::<P, T>(&mut poly_z, &challenges.b[6..9]);
+        fft_span.exit();
 
         if poly_z.len() > zkey.domain_size + 3 {
             Err(PlonkProofError::PolynomialDegreeTooLarge)
         } else {
             tracing::debug!("computing z polynomial done!");
             Ok(PolyEval {
-                poly: poly_z.into(),
+                poly: poly_z,
                 eval: eval_z,
             })
         }
     }
 
     // Round 2 of https://eprint.iacr.org/2019/953.pdf (page 28)
-    pub(super) fn round2(self) -> PlonkProofResult<Round3<'a, T, P>> {
+    #[instrument(level = "debug", name = "Plonk - Round 2", skip_all)]
+    pub(super) async fn round2(self) -> PlonkProofResult<Round3<'a, P, T>> {
         let Self {
             mut driver,
             data,
@@ -276,18 +228,14 @@ where
         let gamma = transcript.get_challenge();
         tracing::debug!("beta: {beta}, gamma: {gamma}");
         let challenges = Round2Challenges::new(challenges, beta, gamma);
-        let z = Self::compute_z(&mut driver, zkey, &domains, &challenges, &polys)?;
+        let z = Self::compute_z(&mut driver, zkey, &domains, &challenges, &polys).await?;
         // STEP 2.3 - Compute permutation [z]_1
 
         tracing::debug!("committing to poly z (MSMs)");
-        let commit_z = MSMProvider::<P::G1>::msm_public_points(
-            &mut driver,
-            &zkey.p_tau[..z.poly.get_len()],
-            &z.poly,
-        );
-        let proof = Round2Proof::new(proof, driver.open_point(&commit_z)?);
+        let commit_z = T::msm_public_points_g1(&zkey.p_tau[..z.poly.len()], &z.poly);
+        let commit_z = driver.open_point_g1(commit_z).await?;
+        let proof = Round2Proof::new(proof, commit_z);
         tracing::debug!("round2 result: {proof}");
-
         Ok(Round3 {
             driver,
             domains,
@@ -308,8 +256,8 @@ pub mod tests {
     use circom_types::plonk::ZKey;
     use circom_types::Witness;
     use co_circom_snarks::SharedWitness;
-    use mpc_core::protocols::plain::PlainDriver;
 
+    use crate::mpc::plain::PlainPlonkDriver;
     use crate::round1::Round1;
     macro_rules! g1_from_xy {
         ($x: expr,$y: expr) => {
@@ -323,9 +271,10 @@ pub mod tests {
     use super::Round1Challenges;
     use ark_ec::pairing::Pairing;
     use std::str::FromStr;
-    #[test]
-    fn test_round2_multiplier2() {
-        let mut driver = PlainDriver::<ark_bn254::Fr>::default();
+
+    #[tokio::test]
+    async fn test_round2_multiplier2() {
+        let mut driver = PlainPlonkDriver;
         let mut reader = BufReader::new(
             File::open("../../test_vectors/Plonk/bn254/multiplier2/circuit.zkey").unwrap(),
         );
@@ -334,16 +283,16 @@ pub mod tests {
             File::open("../../test_vectors/Plonk/bn254/multiplier2/witness.wtns").unwrap();
         let witness = Witness::<ark_bn254::Fr>::from_reader(witness_file).unwrap();
         let public_input = witness.values[..=zkey.n_public].to_vec();
-        let witness = SharedWitness::<PlainDriver<ark_bn254::Fr>, Bn254> {
+        let witness = SharedWitness {
             public_inputs: public_input.clone(),
             witness: witness.values[zkey.n_public + 1..].to_vec(),
         };
 
         let challenges = Round1Challenges::deterministic(&mut driver);
-        let mut round1 = Round1::init_round(driver, &zkey, witness).unwrap();
+        let mut round1 = Round1::init_round(driver, &zkey, witness).await.unwrap();
         round1.challenges = challenges;
-        let round2 = round1.round1().unwrap();
-        let round3 = round2.round2().unwrap();
+        let round2 = round1.round1().await.unwrap();
+        let round3 = round2.round2().await.unwrap();
         assert_eq!(
             round3.proof.commit_z,
             g1_from_xy!(

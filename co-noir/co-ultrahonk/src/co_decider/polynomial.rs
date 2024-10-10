@@ -1,55 +1,48 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, Zero};
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use std::{
     fmt::Debug,
     ops::{Index, IndexMut},
 };
 use ultrahonk::prelude::Polynomial;
 
-pub(crate) struct SharedPolynomial<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(crate) coefficients: Vec<T::FieldShare>,
+use crate::mpc::NoirUltraHonkProver;
+
+pub(crate) struct SharedPolynomial<T: NoirUltraHonkProver<P>, P: Pairing> {
+    pub(crate) coefficients: Vec<T::ArithmeticShare>,
 }
 
-impl<T, P: Pairing> SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub fn new(coefficients: Vec<T::FieldShare>) -> Self {
+impl<T: NoirUltraHonkProver<P>, P: Pairing> SharedPolynomial<T, P> {
+    pub fn new(coefficients: Vec<T::ArithmeticShare>) -> Self {
         Self { coefficients }
     }
 
     pub(crate) fn promote_poly(driver: &T, poly: Polynomial<P::ScalarField>) -> Self {
-        // TACEO TODO remove the FieldShareVec
-        let coefficients: T::FieldShareVec = driver.promote_to_trivial_shares(poly.as_ref());
-        let coefficients = coefficients.into_iter().collect();
+        let coefficients = T::promote_to_trivial_shares(driver.get_party_id(), poly.as_ref());
         Self { coefficients }
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &T::FieldShare> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &T::ArithmeticShare> {
         self.coefficients.iter()
     }
 
-    pub(crate) fn add_assign_slice(&mut self, driver: &mut T, other: &[T::FieldShare]) {
+    pub(crate) fn add_assign_slice(&mut self, driver: &mut T, other: &[T::ArithmeticShare]) {
         // Barrettenberg uses multithreading here
         for (des, src) in self.coefficients.iter_mut().zip(other.iter()) {
-            *des = driver.add(des, src);
+            *des = driver.add(*des, *src);
         }
     }
 
     pub(crate) fn add_scaled_slice(
         &mut self,
         driver: &mut T,
-        src: &[T::FieldShare],
+        src: &[T::ArithmeticShare],
         scalar: &P::ScalarField,
     ) {
         // Barrettenberg uses multithreading here
         for (des, src) in self.coefficients.iter_mut().zip(src.iter()) {
-            let tmp = driver.mul_with_public(scalar, src);
-            *des = driver.add(des, &tmp);
+            let tmp = driver.mul_with_public(*scalar, *src);
+            *des = driver.add(*des, tmp);
         }
     }
 
@@ -71,7 +64,7 @@ where
         // Barrettenberg uses multithreading here
         for (des, src) in self.coefficients.iter_mut().zip(src.iter()) {
             let tmp = *scalar * src;
-            *des = driver.add_with_public(&tmp, des);
+            *des = driver.add_with_public(tmp, *des);
         }
     }
 
@@ -80,7 +73,7 @@ where
     }
 
     // Can only shift by 1
-    pub(crate) fn shifted(&self) -> &[T::FieldShare] {
+    pub(crate) fn shifted(&self) -> &[T::ArithmeticShare] {
         assert!(!self.coefficients.is_empty());
         &self.coefficients[1..]
     }
@@ -129,8 +122,8 @@ where
             for coeff in self.coefficients.iter_mut() {
                 // at the start of the loop, temp = bᵢ₋₁
                 // and we can compute bᵢ   = (aᵢ − bᵢ₋₁)⋅(−r)⁻¹
-                temp = driver.sub(coeff, &temp);
-                temp = driver.mul_with_public(&root_inverse, &temp);
+                temp = driver.sub(*coeff, temp);
+                temp = driver.mul_with_public(root_inverse, temp);
                 *coeff = temp.to_owned();
             }
         }
@@ -138,10 +131,7 @@ where
     }
 }
 
-impl<T, P: Pairing> Clone for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Clone for SharedPolynomial<T, P> {
     fn clone(&self) -> Self {
         Self {
             coefficients: self.coefficients.clone(),
@@ -149,10 +139,7 @@ where
     }
 }
 
-impl<T, P: Pairing> Default for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for SharedPolynomial<T, P> {
     fn default() -> Self {
         Self {
             coefficients: Default::default(),
@@ -160,38 +147,26 @@ where
     }
 }
 
-impl<T, P: Pairing> Debug for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Debug for SharedPolynomial<T, P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedPolynomial")
             .field("coefficients", &self.coefficients)
             .finish()
     }
 }
-impl<T, P: Pairing> AsRef<[T::FieldShare]> for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    fn as_ref(&self) -> &[T::FieldShare] {
+impl<T: NoirUltraHonkProver<P>, P: Pairing> AsRef<[T::ArithmeticShare]> for SharedPolynomial<T, P> {
+    fn as_ref(&self) -> &[T::ArithmeticShare] {
         &self.coefficients
     }
 }
-impl<T, P: Pairing> Index<usize> for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    type Output = T::FieldShare;
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Index<usize> for SharedPolynomial<T, P> {
+    type Output = T::ArithmeticShare;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.coefficients[index]
     }
 }
-impl<T, P: Pairing> IndexMut<usize> for SharedPolynomial<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> IndexMut<usize> for SharedPolynomial<T, P> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.coefficients[index]
     }

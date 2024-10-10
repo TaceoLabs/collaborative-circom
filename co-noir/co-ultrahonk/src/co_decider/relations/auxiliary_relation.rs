@@ -1,11 +1,13 @@
 use super::Relation;
-use crate::co_decider::{
-    types::{ProverUnivariates, RelationParameters},
-    univariates::SharedUnivariate,
+use crate::{
+    co_decider::{
+        types::{ProverUnivariates, RelationParameters},
+        univariates::SharedUnivariate,
+    },
+    mpc::NoirUltraHonkProver,
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::{One, Zero};
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use num_bigint::BigUint;
 use ultrahonk::prelude::{HonkCurve, HonkProofResult, TranscriptFieldType, Univariate};
 
@@ -22,10 +24,7 @@ use ultrahonk::prelude::{HonkCurve, HonkProofResult, TranscriptFieldType, Univar
  * };
  */
 #[derive(Clone, Debug)]
-pub(crate) struct AuxiliaryRelationAcc<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(crate) struct AuxiliaryRelationAcc<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) r0: SharedUnivariate<T, P, 6>,
     pub(crate) r1: SharedUnivariate<T, P, 6>,
     pub(crate) r2: SharedUnivariate<T, P, 6>,
@@ -34,10 +33,7 @@ where
     pub(crate) r5: SharedUnivariate<T, P, 6>,
 }
 
-impl<T, P: Pairing> Default for AuxiliaryRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for AuxiliaryRelationAcc<T, P> {
     fn default() -> Self {
         Self {
             r0: Default::default(),
@@ -50,18 +46,15 @@ where
     }
 }
 
-impl<T, P: Pairing> AuxiliaryRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> AuxiliaryRelationAcc<T, P> {
     pub(crate) fn scale(&mut self, driver: &mut T, elements: &[P::ScalarField]) {
         assert!(elements.len() == AuxiliaryRelation::NUM_RELATIONS);
-        self.r0.scale_inplace(driver, &elements[0]);
-        self.r1.scale_inplace(driver, &elements[1]);
-        self.r2.scale_inplace(driver, &elements[2]);
-        self.r3.scale_inplace(driver, &elements[3]);
-        self.r4.scale_inplace(driver, &elements[4]);
-        self.r5.scale_inplace(driver, &elements[5]);
+        self.r0.scale_inplace(driver, elements[0]);
+        self.r1.scale_inplace(driver, elements[1]);
+        self.r2.scale_inplace(driver, elements[2]);
+        self.r3.scale_inplace(driver, elements[3]);
+        self.r4.scale_inplace(driver, elements[4]);
+        self.r5.scale_inplace(driver, elements[5]);
     }
 
     pub(crate) fn extend_and_batch_univariates<const SIZE: usize>(
@@ -125,11 +118,11 @@ pub(crate) struct AuxiliaryRelation {}
 
 impl AuxiliaryRelation {
     pub(crate) const NUM_RELATIONS: usize = 6;
+    pub(crate) const CRAND_PAIRS_FACTOR: usize = 12;
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> Relation<T, P> for AuxiliaryRelation
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> Relation<T, P>
+    for AuxiliaryRelation
 {
     type Acc = AuxiliaryRelationAcc<T, P>;
     const SKIPPABLE: bool = true;
@@ -173,7 +166,7 @@ where
      * @param parameters contains beta, gamma, and public_input_delta, ....
      * @param scaling_factor optional term to scale the evaluation before adding to evals.
      */
-    fn accumulate(
+    async fn accumulate(
         driver: &mut T,
         univariate_accumulator: &mut Self::Acc,
         input: &ProverUnivariates<T, P>,
@@ -232,19 +225,19 @@ where
             w_3.to_owned(),
             w_2_shift.to_owned(),
         ]);
-        let mul = driver.mul_many(&lhs, &rhs)?;
+        let mul = driver.mul_many(&lhs, &rhs).await?;
         let mul = SharedUnivariate::vec_to_univariates(&mul);
 
         let mut limb_subproduct = mul[0].add(driver, &mul[1]);
         let tmp = mul[2].add(driver, &mul[3]);
         let mut non_native_field_gate_2 = tmp.sub(driver, w_3_shift);
-        non_native_field_gate_2.scale_inplace(driver, &limb_size);
+        non_native_field_gate_2.scale_inplace(driver, limb_size);
         let non_native_field_gate_2 = non_native_field_gate_2
             .sub(driver, w_4_shift)
             .add(driver, &limb_subproduct)
             .mul_public(driver, q_4);
 
-        limb_subproduct.scale_inplace(driver, &limb_size);
+        limb_subproduct.scale_inplace(driver, limb_size);
         let limb_subproduct = limb_subproduct.add(driver, &mul[4]);
         let non_native_field_gate_1 = limb_subproduct
             .sub(driver, w_3)
@@ -266,13 +259,13 @@ where
         // deg 2
 
         let mut limb_accumulator_1 = w_2_shift
-            .scale(driver, &sublimb_shift)
+            .scale(driver, sublimb_shift)
             .add(driver, w_1_shift);
-        limb_accumulator_1.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_1.scale_inplace(driver, sublimb_shift);
         let mut limb_accumulator_1 = limb_accumulator_1.add(driver, w_3);
-        limb_accumulator_1.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_1.scale_inplace(driver, sublimb_shift);
         let mut limb_accumulator_1 = limb_accumulator_1.add(driver, w_2);
-        limb_accumulator_1.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_1.scale_inplace(driver, sublimb_shift);
         let limb_accumulator_1 = limb_accumulator_1
             .add(driver, w_1)
             .sub(driver, w_4)
@@ -281,13 +274,13 @@ where
         // ((((w3' * 2^14 + w2') * 2^14 + w1') * 2^14 + w4) * 2^14 + w3 - w4') * qm
         // deg 2
         let mut limb_accumulator_2 = w_3_shift
-            .scale(driver, &sublimb_shift)
+            .scale(driver, sublimb_shift)
             .add(driver, w_2_shift);
-        limb_accumulator_2.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_2.scale_inplace(driver, sublimb_shift);
         let mut limb_accumulator_2 = limb_accumulator_2.add(driver, w_1_shift);
-        limb_accumulator_2.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_2.scale_inplace(driver, sublimb_shift);
         let mut limb_accumulator_2 = limb_accumulator_2.add(driver, w_4);
-        limb_accumulator_2.scale_inplace(driver, &sublimb_shift);
+        limb_accumulator_2.scale_inplace(driver, sublimb_shift);
         let limb_accumulator_2 = limb_accumulator_2
             .add(driver, w_3)
             .sub(driver, w_4_shift)
@@ -337,10 +330,10 @@ where
          *
          * For ROM gates, qc = 0
          */
-        let tmp1 = w_2.scale(driver, eta_two);
-        let tmp2 = w_1.scale(driver, eta);
+        let tmp1 = w_2.scale(driver, *eta_two);
+        let tmp2 = w_1.scale(driver, *eta);
         let memory_record_check = w_3
-            .scale(driver, eta_three)
+            .scale(driver, *eta_three)
             .add(driver, &tmp1)
             .add(driver, &tmp2)
             .add_public(driver, q_c);
@@ -367,7 +360,7 @@ where
 
         let index_delta_one = index_delta
             .neg(driver)
-            .add_scalar(driver, &P::ScalarField::one());
+            .add_scalar(driver, P::ScalarField::one());
 
         /*
          * RAM Consistency Check
@@ -403,7 +396,7 @@ where
             access_type.to_owned(),
             index_delta_one.to_owned(),
         ]);
-        let mul = driver.mul_many(&lhs, &rhs)?;
+        let mul = driver.mul_many(&lhs, &rhs).await?;
         let mul = SharedUnivariate::vec_to_univariates(&mul);
 
         let index_is_monotonically_increasing = mul[0].sub(driver, &index_delta); // deg 2
@@ -416,19 +409,15 @@ where
         let tmp = adjacent_values_match_if_adjacent_indices_match
             .mul_public(driver, &q_one_by_two_by_aux_by_scaling); // deg 5
         for i in 0..univariate_accumulator.r1.evaluations.len() {
-            univariate_accumulator.r1.evaluations[i] = driver.add(
-                &univariate_accumulator.r1.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r1.evaluations[i] =
+                driver.add(univariate_accumulator.r1.evaluations[i], tmp.evaluations[i]);
         }
 
         let tmp =
             index_is_monotonically_increasing.mul_public(driver, &q_one_by_two_by_aux_by_scaling); // deg 5
         for i in 0..univariate_accumulator.r2.evaluations.len() {
-            univariate_accumulator.r2.evaluations[i] = driver.add(
-                &univariate_accumulator.r2.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r2.evaluations[i] =
+                driver.add(univariate_accumulator.r2.evaluations[i], tmp.evaluations[i]);
         }
 
         let rom_consistency_check_identity = memory_record_check.mul_public(driver, &q_one_by_two); // deg 3 or 4
@@ -440,17 +429,17 @@ where
         // AZTEC TODO(https://github.com/AztecProtocol/barretenberg/issues/757): If we sorted in
         // reverse order we could re-use `partial_record_check`  1 -  (w3' * eta_three + w2' * eta_two + w1' *
         // eta) deg 1 or 2
-        let tmp1 = w_2_shift.scale(driver, eta_two);
-        let tmp2 = w_1_shift.scale(driver, eta);
+        let tmp1 = w_2_shift.scale(driver, *eta_two);
+        let tmp2 = w_1_shift.scale(driver, *eta);
         let next_gate_access_type = w_3_shift
-            .scale(driver, eta_three)
+            .scale(driver, *eta_three)
             .add(driver, &tmp1)
             .add(driver, &tmp2);
         let next_gate_access_type = w_4_shift.sub(driver, &next_gate_access_type);
 
         let tmp = next_gate_access_type
             .neg(driver)
-            .add_scalar(driver, &P::ScalarField::one()); // deg 3 or 4
+            .add_scalar(driver, P::ScalarField::one()); // deg 3 or 4
 
         let timestamp_delta = w_2_shift.sub(driver, w_2);
 
@@ -464,7 +453,7 @@ where
             next_gate_access_type.to_owned(),
             timestamp_delta,
         ]);
-        let mul = driver.mul_many(&lhs, &rhs)?;
+        let mul = driver.mul_many(&lhs, &rhs).await?;
         let mul = SharedUnivariate::vec_to_univariates(&mul);
 
         let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation =
@@ -484,26 +473,20 @@ where
             adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation
                 .mul_public(driver, &q_arith_by_aux_and_scaling); // deg 5 or 6
         for i in 0..univariate_accumulator.r3.evaluations.len() {
-            univariate_accumulator.r3.evaluations[i] = driver.add(
-                &univariate_accumulator.r3.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r3.evaluations[i] =
+                driver.add(univariate_accumulator.r3.evaluations[i], tmp.evaluations[i]);
         }
 
         let tmp = index_is_monotonically_increasing.mul_public(driver, &q_arith_by_aux_and_scaling); // deg 4
         for i in 0..univariate_accumulator.r4.evaluations.len() {
-            univariate_accumulator.r4.evaluations[i] = driver.add(
-                &univariate_accumulator.r4.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r4.evaluations[i] =
+                driver.add(univariate_accumulator.r4.evaluations[i], tmp.evaluations[i]);
         }
 
         let tmp = next_gate_access_type_is_boolean.mul_public(driver, &q_arith_by_aux_and_scaling); // deg 4 or 6
         for i in 0..univariate_accumulator.r5.evaluations.len() {
-            univariate_accumulator.r5.evaluations[i] = driver.add(
-                &univariate_accumulator.r5.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r5.evaluations[i] =
+                driver.add(univariate_accumulator.r5.evaluations[i], tmp.evaluations[i]);
         }
 
         let ram_consistency_check_identity = access_check.mul_public(driver, q_arith); // deg 3 or 5
@@ -540,8 +523,8 @@ where
 
         for i in 0..univariate_accumulator.r0.evaluations.len() {
             univariate_accumulator.r0.evaluations[i] = driver.add(
-                &univariate_accumulator.r0.evaluations[i],
-                &auxiliary_identity.evaluations[i],
+                univariate_accumulator.r0.evaluations[i],
+                auxiliary_identity.evaluations[i],
             );
         }
 

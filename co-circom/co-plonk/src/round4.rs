@@ -1,27 +1,20 @@
 use crate::{
+    mpc::CircomPlonkProver,
     round3::{FinalPolys, Round3Challenges, Round3Proof},
     round5::Round5,
     types::{Domains, Keccak256Transcript, PlonkData},
     PlonkProofResult,
 };
 use ark_ec::pairing::Pairing;
-use mpc_core::traits::{FFTProvider, MSMProvider, PairingEcMpcProtocol, PrimeFieldMpcProtocol};
 
 // Round 4 of https://eprint.iacr.org/2019/953.pdf (page 29)
-pub(super) struct Round4<'a, T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+pub(super) struct Round4<'a, P: Pairing, T: CircomPlonkProver<P>> {
     pub(super) driver: T,
     pub(super) domains: Domains<P::ScalarField>,
-    pub(super) challenges: Round3Challenges<T, P>,
+    pub(super) challenges: Round3Challenges<P, T>,
     pub(super) proof: Round3Proof<P>,
-    pub(super) polys: FinalPolys<T, P>,
-    pub(super) data: PlonkData<'a, T, P>,
+    pub(super) polys: FinalPolys<P, T>,
+    pub(super) data: PlonkData<'a, P, T>,
 }
 pub(super) struct Round4Challenges<P: Pairing> {
     pub(super) beta: P::ScalarField,
@@ -30,9 +23,9 @@ pub(super) struct Round4Challenges<P: Pairing> {
     pub(super) xi: P::ScalarField,
 }
 impl<P: Pairing> Round4Challenges<P> {
-    fn new<T>(round3_challenges: Round3Challenges<T, P>, xi: P::ScalarField) -> Self
+    fn new<T>(round3_challenges: Round3Challenges<P, T>, xi: P::ScalarField) -> Self
     where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
+        T: CircomPlonkProver<P>,
     {
         Self {
             beta: round3_challenges.beta,
@@ -63,7 +56,7 @@ impl<P: Pairing> std::fmt::Display for Round4Proof<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         write!(
             f,
-            "Round3Proof(eval_a: {}, eval_b: {}, eval_c: {}, eval_s1: {}, eval_s2: {}, eval_zw: {})",
+            "Round4Proof(eval_a: {}, eval_b: {}, eval_c: {}, eval_s1: {}, eval_s2: {}, eval_zw: {})",
             self.eval_a,
             self.eval_b,
             self.eval_c,
@@ -103,22 +96,15 @@ impl<P: Pairing> Round4Proof<P> {
 }
 
 // Round 4 of https://eprint.iacr.org/2019/953.pdf (page 29)
-impl<'a, T, P: Pairing> Round4<'a, T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+impl<'a, P: Pairing, T: CircomPlonkProver<P>> Round4<'a, P, T> {
     // Round 4 of https://eprint.iacr.org/2019/953.pdf (page 29)
-    pub(super) fn round4(self) -> PlonkProofResult<Round5<'a, T, P>> {
+    pub(super) async fn round4(self) -> PlonkProofResult<Round5<'a, P, T>> {
         let Self {
             mut driver,
             domains,
             challenges,
             proof,
-            polys,
+            mut polys,
             data,
         } = self;
         tracing::debug!("building challenges for round4 with Keccak256..");
@@ -133,15 +119,23 @@ where
         let challenges = Round4Challenges::new(challenges, xi);
         tracing::debug!("xi: {xi}");
         tracing::debug!("evaluating poly a");
-        let eval_a = driver.evaluate_poly_public(polys.a.poly.to_owned(), &challenges.xi);
+        let poly_a = std::mem::take(&mut polys.a.poly);
+        let poly_b = std::mem::take(&mut polys.b.poly);
+        let poly_c = std::mem::take(&mut polys.c.poly);
+        let poly_z = std::mem::take(&mut polys.z.poly);
+        let (eval_a, poly_a) = T::evaluate_poly_public(poly_a, challenges.xi);
         tracing::debug!("evaluating poly b");
-        let eval_b = driver.evaluate_poly_public(polys.b.poly.to_owned(), &challenges.xi);
+        let (eval_b, poly_b) = T::evaluate_poly_public(poly_b, challenges.xi);
         tracing::debug!("evaluating poly c");
-        let eval_c = driver.evaluate_poly_public(polys.c.poly.to_owned(), &challenges.xi);
+        let (eval_c, poly_c) = T::evaluate_poly_public(poly_c, challenges.xi);
         tracing::debug!("evaluating poly z");
-        let eval_z = driver.evaluate_poly_public(polys.z.poly.to_owned(), &xiw);
+        let (eval_z, poly_z) = T::evaluate_poly_public(poly_z, xiw);
+        polys.a.poly = poly_a;
+        polys.b.poly = poly_b;
+        polys.c.poly = poly_c;
+        polys.z.poly = poly_z;
 
-        let opened = driver.open_many(&[eval_a, eval_b, eval_c, eval_z])?;
+        let opened = driver.open_vec(&[eval_a, eval_b, eval_c, eval_z]).await?;
 
         let eval_a = opened[0];
         let eval_b = opened[1];
@@ -173,14 +167,16 @@ pub mod tests {
     use circom_types::plonk::ZKey;
     use circom_types::Witness;
     use co_circom_snarks::SharedWitness;
-    use mpc_core::protocols::plain::PlainDriver;
 
-    use crate::round1::{Round1, Round1Challenges};
+    use crate::{
+        mpc::plain::PlainPlonkDriver,
+        round1::{Round1, Round1Challenges},
+    };
 
     use std::str::FromStr;
-    #[test]
-    fn test_round4_multiplier2() {
-        let mut driver = PlainDriver::<ark_bn254::Fr>::default();
+    #[tokio::test]
+    async fn test_round4_multiplier2() {
+        let mut driver = PlainPlonkDriver;
         let mut reader = BufReader::new(
             File::open("../../test_vectors/Plonk/bn254/multiplier2/circuit.zkey").unwrap(),
         );
@@ -189,18 +185,18 @@ pub mod tests {
             File::open("../../test_vectors/Plonk/bn254/multiplier2/witness.wtns").unwrap();
         let witness = Witness::<ark_bn254::Fr>::from_reader(witness_file).unwrap();
         let public_input = witness.values[..=zkey.n_public].to_vec();
-        let witness = SharedWitness::<PlainDriver<ark_bn254::Fr>, Bn254> {
+        let witness = SharedWitness {
             public_inputs: public_input.clone(),
             witness: witness.values[zkey.n_public + 1..].to_vec(),
         };
 
         let challenges = Round1Challenges::deterministic(&mut driver);
-        let mut round1 = Round1::init_round(driver, &zkey, witness).unwrap();
+        let mut round1 = Round1::init_round(driver, &zkey, witness).await.unwrap();
         round1.challenges = challenges;
-        let round2 = round1.round1().unwrap();
-        let round3 = round2.round2().unwrap();
-        let round4 = round3.round3().unwrap();
-        let round5 = round4.round4().unwrap();
+        let round2 = round1.round1().await.unwrap();
+        let round3 = round2.round2().await.unwrap();
+        let round4 = round3.round3().await.unwrap();
+        let round5 = round4.round4().await.unwrap();
         assert_eq!(
             round5.proof.eval_a,
             ark_bn254::Fr::from_str(

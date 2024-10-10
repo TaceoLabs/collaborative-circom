@@ -18,10 +18,10 @@ bytes = { workspace = true }
 clap = { workspace = true }
 color-eyre = { workspace = true }
 futures = { workspace = true }
-quinn = "0.11"
+quinn.workspace = true
 rcgen = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { version = "0.7.10", features = ["codec"] }
+tokio-util.workspace = true
 toml.workspace = true
 tracing = { workspace = true }

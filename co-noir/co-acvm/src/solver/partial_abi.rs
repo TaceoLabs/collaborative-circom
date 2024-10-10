@@ -1,7 +1,7 @@
 use super::CoSolver;
+use crate::mpc::NoirWitnessExtensionProtocol;
 use acir::{native_types::WitnessMap, FieldElement};
 use eyre::eyre;
-use mpc_core::traits::NoirWitnessExtensionProtocol;
 use noirc_abi::Abi;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

@@ -1,14 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ark_ec::pairing::Pairing;
-use mpc_core::protocols::{
-    plain::PlainDriver,
-    rep3::network::{Rep3MpcNet, Rep3Network},
-};
+use ark_ff::PrimeField;
+use mpc_core::protocols::rep3::network::{Rep3MpcNet, Rep3Network};
 use mpc_net::config::NetworkConfig;
 
 use crate::{
     accelerator::MpcAccelerator,
+    mpc::plain::CircomPlainVmWitnessExtension,
     mpc_vm::{PlainWitnessExtension, Rep3WitnessExtension, VMConfig, WitnessExtension},
     op_codes::CodeBlock,
 };
@@ -90,10 +88,10 @@ pub(crate) type InputList = Vec<(String, usize, usize)>;
 /// The struct provides certain methods to consume it and create an
 /// [MPC-VM](WitnessExtension).
 #[derive(Clone)]
-pub struct CoCircomCompilerParsed<P: Pairing> {
+pub struct CoCircomCompilerParsed<F: PrimeField> {
     pub(crate) main: String,
     pub(crate) amount_signals: usize,
-    pub(crate) constant_table: Vec<P::ScalarField>,
+    pub(crate) constant_table: Vec<F>,
     pub(crate) string_table: Vec<String>,
     pub(crate) fun_decls: HashMap<String, FunDecl>,
     pub(crate) templ_decls: HashMap<String, TemplateDecl>,
@@ -104,14 +102,14 @@ pub struct CoCircomCompilerParsed<P: Pairing> {
     pub(crate) output_mapping: OutputMapping,
 }
 
-impl<P: Pairing> CoCircomCompilerParsed<P> {
+impl<F: PrimeField> CoCircomCompilerParsed<F> {
     /// > **Warning**: DO NOT CALL THIS DIRECTLY! This struct is intended for internal use by the compiler crate
     /// > and should not be instantiated directly. It is publicly visible due to requirements imposed by licensing constraints.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         main: String,
         amount_signals: usize,
-        constant_table: Vec<P::ScalarField>,
+        constant_table: Vec<F>,
         string_table: Vec<String>,
         fun_decls: HashMap<String, FunDecl>,
         templ_decls: HashMap<String, TemplateDecl>,
@@ -139,7 +137,7 @@ impl<P: Pairing> CoCircomCompilerParsed<P> {
 
 //TODO: Add another builder step here?
 //ParserCompiler -> into Rep3/Shamir -> build
-impl<P: Pairing> CoCircomCompilerParsed<P> {
+impl<F: PrimeField> CoCircomCompilerParsed<F> {
     /// Consumes `self` and constructs an instance of [`PlainWitnessExtension`].
     ///
     /// The plain witness extension allows local execution of the witness extension without
@@ -150,7 +148,7 @@ impl<P: Pairing> CoCircomCompilerParsed<P> {
     pub fn to_plain_vm(
         self,
         vm_config: VMConfig,
-    ) -> WitnessExtension<P, PlainDriver<P::ScalarField>> {
+    ) -> WitnessExtension<F, CircomPlainVmWitnessExtension<F>> {
         PlainWitnessExtension::new(self, vm_config)
     }
 
@@ -166,7 +164,7 @@ impl<P: Pairing> CoCircomCompilerParsed<P> {
         self,
         network_config: NetworkConfig,
         vm_config: VMConfig,
-    ) -> Result<Rep3WitnessExtension<P, Rep3MpcNet>> {
+    ) -> Result<Rep3WitnessExtension<F, Rep3MpcNet>> {
         Rep3WitnessExtension::new(
             self,
             network_config,
@@ -187,7 +185,7 @@ impl<P: Pairing> CoCircomCompilerParsed<P> {
         self,
         network: N,
         vm_config: VMConfig,
-    ) -> Result<Rep3WitnessExtension<P, N>> {
+    ) -> Result<Rep3WitnessExtension<F, N>> {
         Rep3WitnessExtension::from_network(
             self,
             network,

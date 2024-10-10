@@ -11,6 +11,7 @@ publish.workspace = true
 readme.workspace = true
 
 [dependencies]
+ark-ff.workspace = true
 ark-ec.workspace = true
 circom-compiler = { version = "2.1.9", git = "https://github.com/TaceoLabs/circom", package = "compiler", branch = "dev" }
 circom-constraint_generation = { version = "2.1.9", git = "https://github.com/TaceoLabs/circom", package = "constraint_generation", branch = "dev" }

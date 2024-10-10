@@ -7,11 +7,21 @@ use circom_types::plonk::ZKey;
 use circom_types::traits::CircomArkworksPairingBridge;
 use circom_types::traits::CircomArkworksPrimeFieldBridge;
 use co_circom_snarks::SharedWitness;
-use mpc_core::traits::{FFTProvider, MSMProvider, PairingEcMpcProtocol, PrimeFieldMpcProtocol};
+use mpc::rep3::Rep3PlonkDriver;
+use mpc::shamir::ShamirPlonkDriver;
+use mpc::CircomPlonkProver;
+use mpc_core::protocols::rep3::network::IoContext;
+use mpc_core::protocols::rep3::network::Rep3MpcNet;
+use mpc_core::protocols::shamir::ShamirPreprocessing;
+use mpc_core::protocols::shamir::{network::ShamirMpcNet, ShamirProtocol};
+use mpc_net::config::NetworkConfig;
 use round1::Round1;
 use std::io;
 use std::marker::PhantomData;
+use std::time::Instant;
 
+/// This module contains the Plonk prover trait
+pub mod mpc;
 mod plonk;
 mod round1;
 mod round2;
@@ -22,10 +32,13 @@ pub(crate) mod types;
 
 pub use plonk::Plonk;
 
-type FieldShare<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShare;
-type FieldShareVec<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShareVec;
-
 type PlonkProofResult<T> = std::result::Result<T, PlonkProofError>;
+
+/// A type alias for a [CoPlonk] protocol using replicated secret sharing.
+pub type Rep3CoPlonk<P> = CoPlonk<P, Rep3PlonkDriver<Rep3MpcNet>>;
+/// A type alias for a [CoPlonk] protocol using shamir secret sharing.
+pub type ShamirCoPlonk<P> =
+    CoPlonk<P, ShamirPlonkDriver<<P as Pairing>::ScalarField, ShamirMpcNet>>;
 
 /// The errors that may arise during the computation of a co-PLONK proof.
 #[derive(Debug, thiserror::Error)]
@@ -45,27 +58,16 @@ pub enum PlonkProofError {
 }
 
 /// A Plonk proof protocol that uses a collaborative MPC protocol to generate the proof.
-pub struct CoPlonk<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+pub struct CoPlonk<P: Pairing, T: CircomPlonkProver<P>> {
     pub(crate) driver: T,
     phantom_data: PhantomData<P>,
 }
 
-impl<T, P> CoPlonk<T, P>
+impl<P, T> CoPlonk<P, T>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-    P::ScalarField: CircomArkworksPrimeFieldBridge,
+    T: CircomPlonkProver<P>,
     P: Pairing + CircomArkworksPairingBridge,
+    P::ScalarField: CircomArkworksPrimeFieldBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
 {
     /// Creates a new [CoPlonk] protocol with a given MPC driver.
@@ -77,24 +79,40 @@ where
     }
 
     /// Execute the PLONK prover using the internal MPC driver.
-    pub fn prove(
+    pub async fn prove(
         self,
         zkey: &ZKey<P>,
-        witness: SharedWitness<T, P>,
+        witness: SharedWitness<P::ScalarField, T::ArithmeticShare>,
     ) -> PlonkProofResult<PlonkProof<P>> {
-        tracing::debug!("starting PLONK prove..");
-        let state = Round1::init_round(self.driver, zkey, witness)?;
+        let id = self.driver.get_party_id();
+        tracing::info!("Party {}: starting proof generation..", id);
+        let start = Instant::now();
+        tracing::debug!("starting PLONK prove!");
+        tracing::debug!(
+            "we have {} constraints and {} addition constraints",
+            zkey.n_constraints,
+            zkey.n_additions
+        );
+        tracing::debug!("the domain size is {}", zkey.domain_size);
+        tracing::debug!(
+            "we have {} n_vars and {} public inputs",
+            zkey.n_vars,
+            zkey.n_public
+        );
+        let state = Round1::init_round(self.driver, zkey, witness).await?;
         tracing::debug!("init round done..");
-        let state = state.round1()?;
+        let state = state.round1().await?;
         tracing::debug!("round 1 done..");
-        let state = state.round2()?;
+        let state = state.round2().await?;
         tracing::debug!("round 2 done..");
-        let state = state.round3()?;
+        let state = state.round3().await?;
         tracing::debug!("round 3 done..");
-        let state = state.round4()?;
+        let state = state.round4().await?;
         tracing::debug!("round 4 done..");
-        let result = state.round5();
+        let result = state.round5().await;
         tracing::debug!("round 5 done! We are done!");
+        let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
+        tracing::info!("Party {}: Proof generation took {} ms", id, duration_ms);
         result
     }
 }
@@ -102,30 +120,37 @@ where
 mod plonk_utils {
     use ark_ec::pairing::Pairing;
     use circom_types::plonk::ZKey;
-    use mpc_core::traits::{FieldShareVecTrait, PrimeFieldMpcProtocol};
+    use rayon::prelude::*;
 
+    use crate::mpc::CircomPlonkProver;
     use crate::types::{Domains, PlonkWitness};
-    use crate::{FieldShare, FieldShareVec, PlonkProofError, PlonkProofResult};
+    use crate::{PlonkProofError, PlonkProofResult};
     use ark_ff::Field;
     use num_traits::One;
     use num_traits::Zero;
 
-    pub(crate) fn get_witness<T, P: Pairing>(
-        driver: &mut T,
-        witness: &PlonkWitness<T, P>,
+    macro_rules! rayon_join {
+        ($t1: expr, $t2: expr, $t3: expr) => {{
+            let ((x, y), z) = rayon::join(|| rayon::join(|| $t1, || $t2), || $t3);
+            (x, y, z)
+        }};
+    }
+
+    pub(crate) use rayon_join;
+
+    pub(crate) fn get_witness<P: Pairing, T: CircomPlonkProver<P>>(
+        party_id: T::PartyID,
+        witness: &PlonkWitness<P, T>,
         zkey: &ZKey<P>,
         index: usize,
-    ) -> PlonkProofResult<FieldShare<T, P>>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
+    ) -> PlonkProofResult<T::ArithmeticShare> {
         tracing::trace!("get witness on {index}");
         let result = if index <= zkey.n_public {
             tracing::trace!("indexing public input!");
-            driver.promote_to_trivial_share(witness.public_inputs[index])
+            T::promote_to_trivial_share(party_id, witness.public_inputs[index])
         } else if index < zkey.n_vars - zkey.n_additions {
             tracing::trace!("indexing private input!");
-            witness.witness.index(index - zkey.n_public - 1)
+            witness.witness[index - zkey.n_public - 1]
         } else if index < zkey.n_vars {
             tracing::trace!("indexing additions!");
             witness.addition_witness[index + zkey.n_additions - zkey.n_vars].to_owned()
@@ -137,24 +162,24 @@ mod plonk_utils {
     }
 
     // For convenience coeff is given in reverse order
-    pub(crate) fn blind_coefficients<T, P: Pairing>(
-        driver: &mut T,
-        poly: &FieldShareVec<T, P>,
-        coeff_rev: &[FieldShare<T, P>],
-    ) -> Vec<FieldShare<T, P>>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
-        let mut res = poly.clone().into_iter().collect::<Vec<_>>();
-        for (p, c) in res.iter_mut().zip(coeff_rev.iter().rev()) {
-            *p = driver.sub(p, c);
-        }
+    pub(crate) fn blind_coefficients<P: Pairing, T: CircomPlonkProver<P>>(
+        poly: &mut Vec<T::ArithmeticShare>,
+        coeff_rev: &[T::ArithmeticShare],
+    ) {
+        tracing::info!("poly len: {}", poly.len());
+        tracing::info!("coeff_rev: {}", coeff_rev.len());
+        #[allow(unused_mut)]
+        poly.par_iter_mut()
+            .zip(coeff_rev.par_iter().rev())
+            .with_min_len(512)
+            .for_each(|(mut p, c)| {
+                *p = T::sub(*p, *c);
+            });
         // Extend
-        res.reserve(coeff_rev.len());
+        poly.reserve(coeff_rev.len());
         for c in coeff_rev.iter().rev().cloned() {
-            res.push(c);
+            poly.push(c);
         }
-        res
     }
 
     pub(crate) fn calculate_lagrange_evaluations<P: Pairing>(
@@ -195,6 +220,43 @@ mod plonk_utils {
     }
 }
 
+impl<P: Pairing> Rep3CoPlonk<P> {
+    /// Create a new [Rep3CoPlonk] protocol with a given network configuration.
+    pub async fn with_network_config(config: NetworkConfig) -> eyre::Result<Self> {
+        let mpc_net = Rep3MpcNet::new(config).await?;
+        let mut io_context0 = IoContext::init(mpc_net).await?;
+        let io_context1 = io_context0.fork().await?;
+        let driver = Rep3PlonkDriver::new(io_context0, io_context1);
+        Ok(CoPlonk {
+            driver,
+            phantom_data: PhantomData,
+        })
+    }
+}
+
+impl<P: Pairing> ShamirCoPlonk<P> {
+    /// Create a new [ShamirCoPlonk] protocol with a given network configuration.
+    pub async fn with_network_config(
+        threshold: usize,
+        config: NetworkConfig,
+        zkey: &ZKey<P>,
+    ) -> eyre::Result<Self> {
+        let domain_size = zkey.domain_size;
+        // TODO check and explain numbers
+        let num_pairs = domain_size * 222 + 15;
+        let mpc_net = ShamirMpcNet::new(config).await?;
+        let preprocessing = ShamirPreprocessing::new(threshold, mpc_net, num_pairs).await?;
+        let mut protocol0 = ShamirProtocol::from(preprocessing);
+        // TODO check and explain numbers
+        let protocol1 = protocol0.fork_with_pairs(domain_size * 7 + 2).await?;
+        let driver = ShamirPlonkDriver::new(protocol0, protocol1);
+        Ok(CoPlonk {
+            driver,
+            phantom_data: PhantomData,
+        })
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use ark_bn254::Bn254;
@@ -202,20 +264,18 @@ pub mod tests {
     use circom_types::plonk::{JsonVerificationKey, ZKey};
     use circom_types::Witness;
     use co_circom_snarks::SharedWitness;
-    use mpc_core::protocols::plain::PlainDriver;
     use std::{fs::File, io::BufReader};
 
     use crate::plonk::Plonk;
 
-    #[test]
-    pub fn test_multiplier2_bn254() -> eyre::Result<()> {
+    #[tokio::test]
+    pub async fn test_multiplier2_bn254() -> eyre::Result<()> {
         let zkey_file = "../../test_vectors/Plonk/bn254/multiplier2/circuit.zkey";
         let witness_file = "../../test_vectors/Plonk/bn254/multiplier2/witness.wtns";
         let zkey = ZKey::<Bn254>::from_reader(File::open(zkey_file)?)?;
         let witness = Witness::<ark_bn254::Fr>::from_reader(File::open(witness_file)?)?;
-        let driver = PlainDriver::<ark_bn254::Fr>::default();
 
-        let witness = SharedWitness::<PlainDriver<ark_bn254::Fr>, Bn254> {
+        let witness = SharedWitness {
             public_inputs: witness.values[..=zkey.n_public].to_vec(),
             witness: witness.values[zkey.n_public + 1..].to_vec(),
         };
@@ -230,16 +290,14 @@ pub mod tests {
         )
         .unwrap();
 
-        let plonk = Plonk::<Bn254>::new(driver);
-        let proof = plonk.prove(&zkey, witness).unwrap();
+        let proof = Plonk::<Bn254>::plain_prove(&zkey, witness).await.unwrap();
         let result = Plonk::<Bn254>::verify(&vk, &proof, &public_input.values).unwrap();
         assert!(result);
         Ok(())
     }
 
-    #[test]
-    pub fn test_poseidon_bn254() {
-        let driver = PlainDriver::<ark_bn254::Fr>::default();
+    #[tokio::test]
+    pub async fn test_poseidon_bn254() {
         let mut reader = BufReader::new(
             File::open("../../test_vectors/Plonk/bn254/poseidon/circuit.zkey").unwrap(),
         );
@@ -248,7 +306,7 @@ pub mod tests {
             File::open("../../test_vectors/Plonk/bn254/poseidon/witness.wtns").unwrap();
         let witness = Witness::<ark_bn254::Fr>::from_reader(witness_file).unwrap();
         let public_input = witness.values[..=zkey.n_public].to_vec();
-        let witness = SharedWitness::<PlainDriver<ark_bn254::Fr>, Bn254> {
+        let witness = SharedWitness {
             public_inputs: public_input.clone(),
             witness: witness.values[zkey.n_public + 1..].to_vec(),
         };
@@ -263,8 +321,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let plonk = Plonk::<Bn254>::new(driver);
-        let proof = plonk.prove(&zkey, witness).unwrap();
+        let proof = Plonk::<Bn254>::plain_prove(&zkey, witness).await.unwrap();
 
         let mut proof_bytes = vec![];
         serde_json::to_writer(&mut proof_bytes, &proof).unwrap();

@@ -1,20 +1,18 @@
 use ark_ec::pairing::Pairing;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use std::marker::PhantomData;
 use ultrahonk::prelude::{
     Polynomial, PrecomputedEntities, ProverCrs, ShiftedTableEntities, ShiftedWitnessEntities,
 };
 
-pub struct ProvingKey<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+use crate::mpc::NoirUltraHonkProver;
+
+pub struct ProvingKey<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) crs: ProverCrs<P>,
-    pub(crate) circuit_size: u32,
+    pub circuit_size: u32,
     pub(crate) public_inputs: Vec<P::ScalarField>,
     pub(crate) num_public_inputs: u32,
     pub(crate) pub_inputs_offset: u32,
-    pub(crate) polynomials: Polynomials<T::FieldShare, P::ScalarField>,
+    pub(crate) polynomials: Polynomials<T::ArithmeticShare, P::ScalarField>,
     pub(crate) memory_read_records: Vec<u32>,
     pub(crate) memory_write_records: Vec<u32>,
     pub(crate) phantom: PhantomData<T>,

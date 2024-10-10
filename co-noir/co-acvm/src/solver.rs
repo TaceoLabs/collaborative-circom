@@ -6,24 +6,21 @@ use acir::{
 };
 use ark_ff::PrimeField;
 use intmap::IntMap;
-use mpc_core::{
-    protocols::{
-        plain::PlainDriver,
-        rep3::{network::Rep3Network, Rep3Protocol},
-    },
-    traits::NoirWitnessExtensionProtocol,
-};
+use mpc_core::{lut::LookupTableProvider, protocols::rep3::network::Rep3Network};
 use noirc_abi::{input_parser::Format, Abi, MAIN_RETURN_NAME};
 use noirc_artifacts::program::ProgramArtifact;
 use std::{collections::BTreeMap, io, path::PathBuf};
+
+use crate::mpc::{plain::PlainAcvmSolver, rep3::Rep3AcvmSolver, NoirWitnessExtensionProtocol};
 /// The default expression width defined used by the ACVM.
 pub(crate) const CO_EXPRESSION_WIDTH: ExpressionWidth = ExpressionWidth::Bounded { width: 4 };
 
 mod assert_zero_solver;
 mod memory_solver;
 pub mod partial_abi;
-pub type PlainCoSolver<F> = CoSolver<PlainDriver<F>, F>;
-pub type Rep3CoSolver<F, N> = CoSolver<Rep3Protocol<F, N>, F>;
+
+pub type PlainCoSolver<F> = CoSolver<PlainAcvmSolver<F>, F>;
+pub type Rep3CoSolver<F, N> = CoSolver<Rep3AcvmSolver<F, N>, F>;
 
 type CoAcvmResult<T> = std::result::Result<T, CoAcvmError>;
 
@@ -68,7 +65,7 @@ where
     // there will a more fields added as we add functionality
     function_index: usize,
     // the memory blocks
-    memory_access: IntMap<T::SecretSharedMap>,
+    memory_access: IntMap<<T::Lookup as LookupTableProvider<F>>::SecretSharedMap>,
 }
 
 impl<T> CoSolver<T, ark_bn254::Fr>
@@ -191,17 +188,17 @@ impl<N: Rep3Network> Rep3CoSolver<ark_bn254::Fr, N> {
     where
         PathBuf: From<P>,
     {
-        Self::new_bn254(Rep3Protocol::new(network)?, compiled_program, prover_path)
+        Self::new_bn254(Rep3AcvmSolver::new(network), compiled_program, prover_path)
     }
 
     pub fn from_network_with_witness(
         network: N,
         compiled_program: ProgramArtifact,
         witness: WitnessMap<
-            <Rep3Protocol<ark_bn254::Fr, N> as NoirWitnessExtensionProtocol::<ark_bn254::Fr>>::AcvmType,
+            <Rep3AcvmSolver<ark_bn254::Fr, N> as NoirWitnessExtensionProtocol::<ark_bn254::Fr>>::AcvmType,
         >,
     ) -> eyre::Result<Self> {
-        Self::new_bn254_with_witness(Rep3Protocol::new(network)?, compiled_program, witness)
+        Self::new_bn254_with_witness(Rep3AcvmSolver::new(network), compiled_program, witness)
     }
 }
 
@@ -239,7 +236,7 @@ impl PlainCoSolver<ark_bn254::Fr> {
     where
         PathBuf: From<P>,
     {
-        Self::new_bn254(PlainDriver::default(), compiled_program, prover_path)
+        Self::new_bn254(PlainAcvmSolver::default(), compiled_program, prover_path)
     }
 
     pub fn solve_and_print_output(self) {

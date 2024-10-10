@@ -56,6 +56,7 @@ noirc-artifacts = { version = "0.33.0", git = "https://github.com/noir-lang/noir
 num-bigint = { version = "0.4.5" }
 num-traits = { version = "0.2.18", default-features = false }
 paste = "1.0.15"
+quinn = "0.11"
 rand = "0.8.5"
 rand_chacha = "0.3"
 rayon = "1.8.1"
@@ -75,6 +76,7 @@ tokio = { version = "1.34.0", features = [
     "io-util",
     "macros",
 ] }
+tokio-util = { version = "0.7.10", features = ["codec"] }
 toml = "0.8.13"
 tracing = { version = "0.1.40" }
 tracing-subscriber = "0.3"

@@ -1,3 +1,7 @@
+pub use crate::mpc::plain::PlainUltraHonkDriver;
+pub use crate::mpc::rep3::Rep3UltraHonkDriver;
+pub use crate::mpc::shamir::ShamirUltraHonkDriver;
+pub use crate::mpc::NoirUltraHonkProver;
 pub use crate::parse::{
     builder_variable::SharedBuilderVariable, CoUltraCircuitBuilder, PlainCoBuilder, Rep3CoBuilder,
     ShamirCoBuilder,

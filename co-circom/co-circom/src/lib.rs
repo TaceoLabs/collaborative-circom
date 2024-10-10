@@ -3,6 +3,8 @@
 use std::{io::Read, path::PathBuf, time::Instant};
 
 use ark_ec::pairing::Pairing;
+use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use circom_mpc_compiler::{CoCircomCompiler, CompilerConfig};
 use circom_mpc_vm::mpc_vm::VMConfig;
 use circom_types::{
@@ -12,18 +14,15 @@ use circom_types::{
 use clap::Args;
 use clap::ValueEnum;
 use co_circom_snarks::{SharedInput, SharedWitness};
-use co_groth16::CoGroth16;
+use co_groth16::Rep3CoGroth16;
 use color_eyre::eyre::Context;
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     Figment,
 };
-use mpc_core::{
-    protocols::rep3::{
-        network::{Rep3MpcNet, Rep3Network},
-        Rep3Protocol,
-    },
-    traits::PrimeFieldMpcProtocol,
+use mpc_core::protocols::rep3::{
+    network::{Rep3MpcNet, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 use mpc_net::config::NetworkConfig;
 use serde::{Deserialize, Serialize};
@@ -482,16 +481,22 @@ impl_config!(GenerateProofCli, GenerateProofConfig);
 impl_config!(VerifyCli, VerifyConfig);
 
 /// Try to parse a [SharedWitness] from a [Read]er.
-pub fn parse_witness_share<R: Read, P: Pairing, T: PrimeFieldMpcProtocol<P::ScalarField>>(
+pub fn parse_witness_share<R: Read, F: PrimeField, S>(
     reader: R,
-) -> color_eyre::Result<SharedWitness<T, P>> {
+) -> color_eyre::Result<SharedWitness<F, S>>
+where
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
+{
     bincode::deserialize_from(reader).context("trying to parse witness share file")
 }
 
 /// Try to parse a [SharedInput] from a [Read]er.
-pub fn parse_shared_input<R: Read, P: Pairing, T: PrimeFieldMpcProtocol<P::ScalarField>>(
+pub fn parse_shared_input<R: Read, F: PrimeField, S>(
     reader: R,
-) -> color_eyre::Result<SharedInput<T, P>> {
+) -> color_eyre::Result<SharedInput<F, S>>
+where
+    S: CanonicalSerialize + CanonicalDeserialize + Clone,
+{
     bincode::deserialize_from(reader).context("trying to parse input share file")
 }
 
@@ -503,14 +508,19 @@ pub fn parse_shared_input<R: Read, P: Pairing, T: PrimeFieldMpcProtocol<P::Scala
 /// 4. Execute the bytecode on the MPC VM to generate the witness.
 pub fn generate_witness_rep3<P>(
     circuit: String,
-    input_share: SharedInput<Rep3Protocol<P::ScalarField, Rep3MpcNet>, P>,
+    input_share: SharedInput<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>,
     config: GenerateWitnessConfig,
-) -> color_eyre::Result<SharedWitness<Rep3Protocol<P::ScalarField, Rep3MpcNet>, P>>
+) -> color_eyre::Result<SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>>
 where
     P: Pairing + CircomArkworksPairingBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("while building runtime")?;
+
     let circuit_path = PathBuf::from(&circuit);
     file_utils::check_file_exists(&circuit_path)?;
 
@@ -519,11 +529,13 @@ where
         .context("while parsing circuit file")?;
 
     // connect to network
-    let net = Rep3MpcNet::new(config.network).context("while connecting to network")?;
+    let net = rt
+        .block_on(Rep3MpcNet::new(config.network))
+        .context("while connecting to network")?;
     let id = usize::from(net.get_id());
 
     // init MPC protocol
-    let rep3_vm = parsed_circom_circuit
+    let mut rep3_vm = parsed_circom_circuit
         .to_rep3_vm_with_network(net, config.vm)
         .context("while constructing MPC VM")?;
 
@@ -532,8 +544,12 @@ where
     let result_witness_share = rep3_vm
         .run(input_share)
         .context("while running witness generation")?;
+
     let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
     tracing::info!("Party {}: Witness extension took {} ms", id, duration_ms);
+
+    rep3_vm.close_network()?;
+
     Ok(result_witness_share.into_shared_witness())
 }
 
@@ -543,7 +559,7 @@ where
 /// 2. Construct a [CoGroth16] prover from the protocol.
 /// 3. Execute the proof in MPC
 pub fn prove_with_matrices_rep3<P: Pairing + CircomArkworksPairingBridge>(
-    witness_share: SharedWitness<Rep3Protocol<P::ScalarField, Rep3MpcNet>, P>,
+    witness_share: SharedWitness<P::ScalarField, Rep3PrimeFieldShare<P::ScalarField>>,
     config: NetworkConfig,
     zkey: ZKey<P>,
 ) -> color_eyre::Result<Groth16Proof<P>>
@@ -551,16 +567,15 @@ where
     P::ScalarField: CircomArkworksPrimeFieldBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
 {
-    tracing::info!("establishing network....");
+    tracing::info!("establishing network and building protocol....");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("while building runtime")?;
+    let prover = rt.block_on(Rep3CoGroth16::with_network_config(config))?;
     // connect to network
-    let net = Rep3MpcNet::new(config)?;
     tracing::info!("done!");
-    // init MPC protocol
-    tracing::info!("building protocol...");
-    let protocol = Rep3Protocol::<P::ScalarField, _>::new(net)?;
-    tracing::info!("done!");
-    let mut prover = CoGroth16::<Rep3Protocol<P::ScalarField, _>, P>::new(protocol);
     tracing::info!("starting prover...");
     // execute prover in MPC
-    prover.prove(&zkey, witness_share)
+    rt.block_on(prover.prove(&zkey, witness_share))
 }

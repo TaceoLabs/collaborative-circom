@@ -1,20 +1,17 @@
 use super::univariates::SharedUnivariate;
 use crate::{
+    mpc::NoirUltraHonkProver,
     types::{AllEntities, Polynomials},
     NUM_ALPHAS,
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use itertools::izip;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use std::iter;
 use ultrahonk::prelude::Univariate;
 
-pub(crate) struct ProverMemory<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(crate) polys: AllEntities<Vec<T::FieldShare>, Vec<P::ScalarField>>,
+pub(crate) struct ProverMemory<T: NoirUltraHonkProver<P>, P: Pairing> {
+    pub(crate) polys: AllEntities<Vec<T::ArithmeticShare>, Vec<P::ScalarField>>,
     pub(crate) relation_parameters: RelationParameters<P::ScalarField>,
 }
 
@@ -24,7 +21,7 @@ pub(crate) type ProverUnivariates<T, P> = AllEntities<
     Univariate<<P as Pairing>::ScalarField, MAX_PARTIAL_RELATION_LENGTH>,
 >;
 pub(crate) type PartiallyEvaluatePolys<T, P> = AllEntities<
-    Vec<<T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShare>,
+    Vec<<T as NoirUltraHonkProver<P>>::ArithmeticShare>,
     Vec<<P as Pairing>::ScalarField>,
 >;
 pub(crate) type ClaimedEvaluations<F> = AllEntities<F, F>;
@@ -40,13 +37,10 @@ pub(crate) struct RelationParameters<F: PrimeField> {
     pub(crate) gate_challenges: Vec<F>,
 }
 
-impl<T, P: Pairing> ProverMemory<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> ProverMemory<T, P> {
     pub(crate) fn from_memory_and_polynomials(
         prover_memory: crate::co_oink::types::ProverMemory<T, P>,
-        polynomials: Polynomials<T::FieldShare, P::ScalarField>,
+        polynomials: Polynomials<T::ArithmeticShare, P::ScalarField>,
     ) -> Self {
         let relation_parameters = RelationParameters {
             eta_1: prover_memory.challenges.eta_1,

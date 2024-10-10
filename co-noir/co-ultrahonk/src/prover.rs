@@ -1,29 +1,23 @@
 use crate::{
     co_decider::{prover::CoDecider, types::ProverMemory},
     co_oink::prover::CoOink,
+    mpc::NoirUltraHonkProver,
     types::ProvingKey,
     CONST_PROOF_SIZE_LOG_N,
 };
 use ark_ec::pairing::Pairing;
-use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use std::marker::PhantomData;
 use ultrahonk::prelude::{
     HonkCurve, HonkProof, HonkProofResult, TranscriptFieldType, TranscriptType,
     POSEIDON2_BN254_T4_PARAMS,
 };
 
-pub struct CoUltraHonk<T, P: HonkCurve<TranscriptFieldType>>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
-{
+pub struct CoUltraHonk<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> {
     pub(crate) driver: T,
     phantom_data: PhantomData<P>,
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> CoUltraHonk<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
-{
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> CoUltraHonk<T, P> {
     pub fn new(driver: T) -> Self {
         Self {
             driver,
@@ -44,7 +38,7 @@ where
         gate_challenges
     }
 
-    pub fn prove(
+    pub async fn prove(
         mut self,
         proving_key: ProvingKey<T, P>,
     ) -> HonkProofResult<HonkProof<TranscriptFieldType>> {
@@ -53,7 +47,7 @@ where
         let mut transcript = TranscriptType::new(&POSEIDON2_BN254_T4_PARAMS);
 
         let oink = CoOink::new(&mut self.driver);
-        let oink_result = oink.prove(&proving_key, &mut transcript)?;
+        let oink_result = oink.prove(&proving_key, &mut transcript).await?;
 
         let cicruit_size = proving_key.circuit_size;
         let crs = proving_key.crs;
@@ -64,6 +58,6 @@ where
             Self::generate_gate_challenges(&mut transcript);
 
         let decider = CoDecider::new(self.driver, memory);
-        decider.prove(cicruit_size, &crs, transcript)
+        decider.prove(cicruit_size, &crs, transcript).await
     }
 }

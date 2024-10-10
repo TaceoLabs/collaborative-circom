@@ -4,9 +4,8 @@ use acir::{
     native_types::{Expression, Witness},
 };
 use ark_ff::PrimeField;
-use mpc_core::traits::NoirWitnessExtensionProtocol;
 
-use crate::solver::solver_utils;
+use crate::{mpc::NoirWitnessExtensionProtocol, solver::solver_utils};
 
 use super::{CoAcvmResult, CoSolver};
 

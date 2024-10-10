@@ -1,26 +1,22 @@
 use super::Relation;
-use crate::co_decider::{
-    types::{ProverUnivariates, RelationParameters},
-    univariates::SharedUnivariate,
+use crate::{
+    co_decider::{
+        types::{ProverUnivariates, RelationParameters},
+        univariates::SharedUnivariate,
+    },
+    mpc::NoirUltraHonkProver,
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, Zero};
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use ultrahonk::prelude::{HonkCurve, HonkProofResult, TranscriptFieldType, Univariate};
 
 #[derive(Clone, Debug)]
-pub(crate) struct UltraArithmeticRelationAcc<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(crate) struct UltraArithmeticRelationAcc<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) r0: SharedUnivariate<T, P, 6>,
     pub(crate) r1: SharedUnivariate<T, P, 5>,
 }
 
-impl<T, P: Pairing> Default for UltraArithmeticRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for UltraArithmeticRelationAcc<T, P> {
     fn default() -> Self {
         Self {
             r0: Default::default(),
@@ -29,14 +25,11 @@ where
     }
 }
 
-impl<T, P: Pairing> UltraArithmeticRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> UltraArithmeticRelationAcc<T, P> {
     pub(crate) fn scale(&mut self, driver: &mut T, elements: &[P::ScalarField]) {
         assert!(elements.len() == UltraArithmeticRelation::NUM_RELATIONS);
-        self.r0.scale_inplace(driver, &elements[0]);
-        self.r1.scale_inplace(driver, &elements[1]);
+        self.r0.scale_inplace(driver, elements[0]);
+        self.r1.scale_inplace(driver, elements[1]);
     }
 
     pub(crate) fn extend_and_batch_univariates<const SIZE: usize>(
@@ -68,11 +61,11 @@ pub(crate) struct UltraArithmeticRelation {}
 
 impl UltraArithmeticRelation {
     pub(crate) const NUM_RELATIONS: usize = 2;
+    pub(crate) const CRAND_PAIRS_FACTOR: usize = 1;
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> Relation<T, P> for UltraArithmeticRelation
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> Relation<T, P>
+    for UltraArithmeticRelation
 {
     type Acc = UltraArithmeticRelationAcc<T, P>;
     const SKIPPABLE: bool = true;
@@ -133,7 +126,7 @@ where
      * @param parameters contains beta, gamma, and public_input_delta, ....
      * @param scaling_factor optional term to scale the evaluation before adding to evals.
      */
-    fn accumulate(
+    async fn accumulate(
         driver: &mut T,
         univariate_accumulator: &mut Self::Acc,
         input: &ProverUnivariates<T, P>,
@@ -158,13 +151,13 @@ where
 
         let neg_half = -P::ScalarField::from(2u64).inverse().unwrap();
 
-        let mul = driver.mul_many(w_r.as_ref(), w_l.as_ref())?;
+        let mul = driver.mul_many(w_r.as_ref(), w_l.as_ref()).await?;
         let mul = SharedUnivariate::from_vec(&mul);
 
         let mut tmp = mul
             .mul_public(driver, q_m)
             .mul_public(driver, &(q_arith.to_owned() - 3));
-        tmp.scale_inplace(driver, &neg_half);
+        tmp.scale_inplace(driver, neg_half);
 
         let tmp_l = w_l.mul_public(driver, q_l);
         let tmp_r = w_r.mul_public(driver, q_r);
@@ -179,13 +172,11 @@ where
 
         let tmp_arith = w_4_shift.mul_public(driver, &(q_arith.to_owned() - 1));
         let mut tmp = tmp.add(driver, &tmp_arith).mul_public(driver, q_arith);
-        tmp.scale_inplace(driver, scaling_factor);
+        tmp.scale_inplace(driver, *scaling_factor);
 
         for i in 0..univariate_accumulator.r0.evaluations.len() {
-            univariate_accumulator.r0.evaluations[i] = driver.add(
-                &univariate_accumulator.r0.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r0.evaluations[i] =
+                driver.add(univariate_accumulator.r0.evaluations[i], tmp.evaluations[i]);
         }
 
         ///////////////////////////////////////////////////////////////////////
@@ -197,13 +188,11 @@ where
             .mul_public(driver, &(q_arith.to_owned() - 2))
             .mul_public(driver, &(q_arith.to_owned() - 1))
             .mul_public(driver, q_arith)
-            .scale(driver, scaling_factor);
+            .scale(driver, *scaling_factor);
 
         for i in 0..univariate_accumulator.r1.evaluations.len() {
-            univariate_accumulator.r1.evaluations[i] = driver.add(
-                &univariate_accumulator.r1.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r1.evaluations[i] =
+                driver.add(univariate_accumulator.r1.evaluations[i], tmp.evaluations[i]);
         }
 
         Ok(())

@@ -5,10 +5,10 @@ use crate::{
         prover::CoDecider,
         types::{ClaimedEvaluations, PartiallyEvaluatePolys, MAX_PARTIAL_RELATION_LENGTH},
     },
+    mpc::NoirUltraHonkProver,
     types::AllEntities,
-    FieldShare, CONST_PROOF_SIZE_LOG_N,
+    CONST_PROOF_SIZE_LOG_N,
 };
-use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use ultrahonk::{
     prelude::{
         GateSeparatorPolynomial, HonkCurve, HonkProofResult, TranscriptFieldType, TranscriptType,
@@ -18,14 +18,11 @@ use ultrahonk::{
 };
 
 // Keep in mind, the UltraHonk protocol (UltraFlavor) does not per default have ZK
-impl<T, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
-{
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P> {
     pub(crate) fn partially_evaluate_init(
         driver: &mut T,
         partially_evaluated_poly: &mut PartiallyEvaluatePolys<T, P>,
-        polys: &AllEntities<Vec<FieldShare<T, P>>, Vec<P::ScalarField>>,
+        polys: &AllEntities<Vec<T::ArithmeticShare>, Vec<P::ScalarField>>,
         round_size: usize,
         round_challenge: &P::ScalarField,
     ) {
@@ -47,9 +44,9 @@ where
             .zip(partially_evaluated_poly.shared_iter_mut())
         {
             for i in (0..round_size).step_by(2) {
-                let tmp = driver.sub(&poly_src[i + 1], &poly_src[i]);
-                let tmp = driver.mul_with_public(round_challenge, &tmp);
-                poly_des[i >> 1] = driver.add(&poly_src[i], &tmp);
+                let tmp = driver.sub(poly_src[i + 1], poly_src[i]);
+                let tmp = driver.mul_with_public(*round_challenge, tmp);
+                poly_des[i >> 1] = driver.add(poly_src[i], tmp);
             }
         }
     }
@@ -72,9 +69,9 @@ where
 
         for poly in partially_evaluated_poly.shared_iter_mut() {
             for i in (0..round_size).step_by(2) {
-                let tmp = driver.sub(&poly[i + 1], &poly[i]);
-                let tmp = driver.mul_with_public(round_challenge, &tmp);
-                poly[i >> 1] = driver.add(&poly[i], &tmp);
+                let tmp = driver.sub(poly[i + 1], poly[i]);
+                let tmp = driver.mul_with_public(*round_challenge, tmp);
+                poly[i >> 1] = driver.add(poly[i], tmp);
             }
         }
     }
@@ -91,7 +88,7 @@ where
         );
     }
 
-    fn extract_claimed_evaluations(
+    async fn extract_claimed_evaluations(
         driver: &mut T,
         partially_evaluated_polynomials: PartiallyEvaluatePolys<T, P>,
     ) -> HonkProofResult<ClaimedEvaluations<P::ScalarField>> {
@@ -109,7 +106,7 @@ where
             .map(|x| x[0].to_owned())
             .collect::<Vec<_>>();
 
-        let opened = driver.open_many(&shared).unwrap();
+        let opened = driver.open_many(&shared).await?;
 
         for (src, des) in opened
             .into_iter()
@@ -121,7 +118,7 @@ where
         Ok(multivariate_evaluations)
     }
 
-    pub(crate) fn sumcheck_prove(
+    pub(crate) async fn sumcheck_prove(
         &mut self,
         transcript: &mut TranscriptType,
         circuit_size: u32,
@@ -146,14 +143,16 @@ where
         // In the first round, we compute the first univariate polynomial and populate the book-keeping table of
         // #partially_evaluated_polynomials, which has \f$ n/2 \f$ rows and \f$ N \f$ columns. When the Flavor has ZK,
         // compute_univariate also takes into account the zk_sumcheck_data.
-        let round_univariate = sum_check_round.compute_univariate::<T, P>(
-            &mut self.driver,
-            round_idx,
-            &self.memory.relation_parameters,
-            &gate_separators,
-            &self.memory.polys,
-        )?;
-        let round_univariate = self.driver.open_many(&round_univariate.evaluations)?;
+        let round_univariate = sum_check_round
+            .compute_univariate::<T, P>(
+                &mut self.driver,
+                round_idx,
+                &self.memory.relation_parameters,
+                &gate_separators,
+                &self.memory.polys,
+            )
+            .await?;
+        let round_univariate = self.driver.open_many(&round_univariate.evaluations).await?;
 
         // Place the evaluations of the round univariate into transcript.
         transcript.send_fr_iter_to_verifier::<P, _>(
@@ -182,14 +181,16 @@ where
             tracing::trace!("Sumcheck prove round {}", round_idx);
             // Write the round univariate to the transcript
 
-            let round_univariate = sum_check_round.compute_univariate::<T, P>(
-                &mut self.driver,
-                round_idx,
-                &self.memory.relation_parameters,
-                &gate_separators,
-                &partially_evaluated_polys,
-            )?;
-            let round_univariate = self.driver.open_many(&round_univariate.evaluations)?;
+            let round_univariate = sum_check_round
+                .compute_univariate::<T, P>(
+                    &mut self.driver,
+                    round_idx,
+                    &self.memory.relation_parameters,
+                    &gate_separators,
+                    &partially_evaluated_polys,
+                )
+                .await?;
+            let round_univariate = self.driver.open_many(&round_univariate.evaluations).await?;
 
             // Place the evaluations of the round univariate into transcript.
             transcript.send_fr_iter_to_verifier::<P, _>(
@@ -225,7 +226,7 @@ where
         // Claimed evaluations of Prover polynomials are extracted and added to the transcript. When Flavor has ZK, the
         // evaluations of all witnesses are masked.
         let multivariate_evaluations =
-            Self::extract_claimed_evaluations(&mut self.driver, partially_evaluated_polys)?;
+            Self::extract_claimed_evaluations(&mut self.driver, partially_evaluated_polys).await?;
         Self::add_evals_to_transcript(transcript, &multivariate_evaluations);
 
         let res = SumcheckOutput {

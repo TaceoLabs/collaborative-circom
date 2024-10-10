@@ -7,13 +7,13 @@ use crate::{
         prover::CoDecider,
         types::ClaimedEvaluations,
     },
+    mpc::NoirUltraHonkProver,
     types::AllEntities,
-    CoUtils, FieldShare, CONST_PROOF_SIZE_LOG_N, N_MAX,
+    CoUtils, CONST_PROOF_SIZE_LOG_N, N_MAX,
 };
 use ark_ec::Group;
 use ark_ff::{Field, One, Zero};
 use itertools::izip;
-use mpc_core::traits::{MSMProvider, PrimeFieldMpcProtocol};
 use ultrahonk::{
     prelude::{
         HonkCurve, HonkProofResult, Polynomial, ProverCrs, TranscriptFieldType, TranscriptType,
@@ -21,10 +21,7 @@ use ultrahonk::{
     Utils,
 };
 
-impl<T, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField> + MSMProvider<P::G1>,
-{
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> CoDecider<T, P> {
     // /**
     //  * @brief Compute multivariate quotients q_k(X_0, ..., X_{k-1}) for f(X_0, ..., X_{n-1})
     //  * @details Starting from the coefficients of f, compute q_k inductively from k = n - 1, to k = 0.
@@ -60,7 +57,7 @@ where
         let mut q = Vec::with_capacity(size_q);
         let (half_a, half_b) = polynomial.coefficients.split_at(size_q);
         for (a, b) in half_a.iter().zip(half_b.iter()) {
-            q.push(driver.sub(b, a));
+            q.push(driver.sub(*b, *a));
         }
 
         quotients[log_n as usize - 1].coefficients = q;
@@ -73,14 +70,14 @@ where
             let mut f_k = Vec::with_capacity(size_q);
             let index = log_n as usize - k as usize;
             for (g, q) in izip!(g, quotients[index].iter()) {
-                let tmp = driver.mul_with_public(&u_challenge[index], q);
-                f_k.push(driver.add(&g, &tmp));
+                let tmp = driver.mul_with_public(u_challenge[index], *q);
+                f_k.push(driver.add(g, tmp));
             }
             size_q >>= 1;
             let mut q = Vec::with_capacity(size_q);
             let (half_a, half_b) = f_k.split_at(size_q);
             for (a, b) in half_a.iter().zip(half_b.iter()) {
-                q.push(driver.sub(b, a));
+                q.push(driver.sub(*b, *a));
             }
 
             quotients[index - 1].coefficients = q;
@@ -109,7 +106,7 @@ where
         n: usize,
     ) -> SharedPolynomial<T, P> {
         // Batched lifted degree quotient polynomial
-        let mut result = vec![FieldShare::<T, P>::default(); n];
+        let mut result = vec![T::ArithmeticShare::default(); n];
 
         // Compute \hat{q} = \sum_k y^k * X^{N - d_k - 1} * q_k
         let mut scalar = P::ScalarField::one();
@@ -125,8 +122,8 @@ where
                 .take(deg_k + 1)
                 .zip(quotient.iter())
             {
-                let tmp = driver.mul_with_public(&scalar, q);
-                *r = driver.add(r, &tmp);
+                let tmp = driver.mul_with_public(scalar, *q);
+                *r = driver.add(*r, tmp);
             }
 
             scalar *= y_challenge; // update batching scalar y^k
@@ -213,7 +210,7 @@ where
         let phi_numerator = x_challenge.pow([n as u64]) - P::ScalarField::ONE; // x^N - 1
         let phi_n_x = phi_numerator / (x_challenge - P::ScalarField::ONE);
         let rhs = v_evaluation * x_challenge * phi_n_x;
-        result[0] = driver.add_with_public(&-rhs, &result[0]);
+        result[0] = driver.add_with_public(-rhs, result[0]);
 
         // Add contribution from q_k polynomials
         for (k, (q, u)) in izip!(quotients.iter(), u_challenge.iter()).enumerate() {
@@ -284,8 +281,8 @@ where
     }
 
     fn get_f_polyomials(
-        polys: &AllEntities<Vec<FieldShare<T, P>>, Vec<P::ScalarField>>,
-    ) -> PolyF<Vec<FieldShare<T, P>>, Vec<P::ScalarField>> {
+        polys: &AllEntities<Vec<T::ArithmeticShare>, Vec<P::ScalarField>>,
+    ) -> PolyF<Vec<T::ArithmeticShare>, Vec<P::ScalarField>> {
         PolyF {
             precomputed: &polys.precomputed,
             witness: &polys.witness,
@@ -302,8 +299,8 @@ where
     }
 
     fn get_g_polyomials(
-        polys: &AllEntities<Vec<FieldShare<T, P>>, Vec<P::ScalarField>>,
-    ) -> PolyG<Vec<FieldShare<T, P>>, Vec<P::ScalarField>> {
+        polys: &AllEntities<Vec<T::ArithmeticShare>, Vec<P::ScalarField>>,
+    ) -> PolyG<Vec<T::ArithmeticShare>, Vec<P::ScalarField>> {
         let tables = [
             polys.precomputed.table_1(),
             polys.precomputed.table_2(),
@@ -436,7 +433,7 @@ where
      *
      * @AZTEC todo https://github.com/AztecProtocol/barretenberg/issues/1030: document concatenation trick
      */
-    pub(crate) fn zeromorph_prove(
+    pub(crate) async fn zeromorph_prove(
         &mut self,
         transcript: &mut TranscriptType,
         circuit_size: u32,
@@ -472,10 +469,10 @@ where
         // Compute and send commitments C_{q_k} = [q_k], k = 0,...,d-1
         let mut commitments = Vec::with_capacity(log_n as usize);
         for q in quotients.iter() {
-            let commitment = CoUtils::commit(&mut self.driver, q.as_ref(), commitment_key);
+            let commitment = CoUtils::commit::<T, P>(q.as_ref(), commitment_key);
             commitments.push(commitment);
         }
-        let commitments = self.driver.open_point_many(&commitments)?;
+        let commitments = self.driver.open_point_many(&commitments).await?;
         for (idx, val) in commitments.into_iter().enumerate() {
             let label = format!("ZM:C_q_{}", idx);
             transcript.send_point_to_verifier::<P>(label, val.into());
@@ -499,12 +496,8 @@ where
         );
 
         // Compute and send the commitment C_q = [\hat{q}]
-        let q_commitment = CoUtils::commit(
-            &mut self.driver,
-            &batched_quotient.coefficients,
-            commitment_key,
-        );
-        let q_commitment = self.driver.open_point(&q_commitment)?;
+        let q_commitment = CoUtils::commit::<T, P>(&batched_quotient.coefficients, commitment_key);
+        let q_commitment = self.driver.open_point(q_commitment).await?;
         transcript.send_point_to_verifier::<P>("ZM:C_q".to_string(), q_commitment.into());
 
         // Get challenges x and z

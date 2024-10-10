@@ -25,15 +25,24 @@ ark-groth16 = { version = "=0.4.0", default-features = false, features = [
 ], optional = true }
 ark-poly = { workspace = true }
 ark-relations = { workspace = true }
+ark-serialize = { workspace = true }
 circom-types = { version = "0.5.0", path = "../circom-types" }
 co-circom-snarks = { version = "0.1.2", path = "../co-circom-snarks" }
 eyre = { workspace = true }
+futures = { workspace = true, features = ["executor"] }
 itertools = { workspace = true }
 mpc-core = { version = "0.5.0", path = "../../mpc-core" }
 mpc-net = { version = "0.1.2", path = "../../mpc-net" }
 num-traits = { workspace = true }
 rand = { workspace = true }
+rayon = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
+
+# DELETE ME
+tracing-subscriber.workspace = true
+serde_json = { workspace = true }
+bytes = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -1,17 +1,13 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use ultrahonk::prelude::Polynomial;
 
-use crate::NUM_ALPHAS;
+use crate::{mpc::NoirUltraHonkProver, NUM_ALPHAS};
 
-pub(crate) struct ProverMemory<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(crate) w_4: Polynomial<T::FieldShare>,    // column 3
-    pub(crate) z_perm: Polynomial<T::FieldShare>, // column 4
-    pub(crate) lookup_inverses: Polynomial<T::FieldShare>, // column 5
+pub(crate) struct ProverMemory<T: NoirUltraHonkProver<P>, P: Pairing> {
+    pub(crate) w_4: Polynomial<T::ArithmeticShare>, // column 3
+    pub(crate) z_perm: Polynomial<T::ArithmeticShare>, // column 4
+    pub(crate) lookup_inverses: Polynomial<T::ArithmeticShare>, // column 5
     pub(crate) public_input_delta: P::ScalarField,
     pub(crate) challenges: Challenges<P::ScalarField>,
 }
@@ -38,10 +34,7 @@ impl<F: PrimeField> Default for Challenges<F> {
     }
 }
 
-impl<T, P: Pairing> Default for ProverMemory<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for ProverMemory<T, P> {
     fn default() -> Self {
         Self {
             w_4: Default::default(),

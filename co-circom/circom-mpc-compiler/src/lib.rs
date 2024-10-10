@@ -603,7 +603,10 @@ where
     /// - `Ok(parsed)` contains the parsed compiler, which can be used to construct the MPC-VM.
     ///   Refer to its [documentation](CoCircomCompilerParsed) for usage details.
     /// - `Err(err)` indicates an error occurred during parsing or compilation.
-    pub fn parse(file: String, config: CompilerConfig) -> Result<CoCircomCompilerParsed<P>> {
+    pub fn parse(
+        file: String,
+        config: CompilerConfig,
+    ) -> Result<CoCircomCompilerParsed<P::ScalarField>> {
         Self::new(file, config).parse_inner()
     }
 
@@ -613,7 +616,7 @@ where
         Ok(program_archive.public_inputs)
     }
 
-    fn parse_inner(mut self) -> Result<CoCircomCompilerParsed<P>> {
+    fn parse_inner(mut self) -> Result<CoCircomCompilerParsed<P::ScalarField>> {
         tracing::debug!("compiler starts parsing..");
         let program_archive = self.get_program_archive()?;
         let (circuit, output_mapping) = self.build_circuit(program_archive)?;
@@ -716,7 +719,7 @@ mod tests {
         )
         .unwrap();
 
-        let plain_vm = parsed.to_plain_vm(VMConfig::default());
+        let mut plain_vm = parsed.to_plain_vm(VMConfig::default());
         let finalized_witness = plain_vm
             .run_with_flat(
                 to_field_vec!(vec![

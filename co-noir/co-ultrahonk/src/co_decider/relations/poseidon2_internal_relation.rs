@@ -1,31 +1,27 @@
 use super::Relation;
-use crate::co_decider::{
-    types::{ProverUnivariates, RelationParameters},
-    univariates::SharedUnivariate,
+use crate::{
+    co_decider::{
+        types::{ProverUnivariates, RelationParameters},
+        univariates::SharedUnivariate,
+    },
+    mpc::NoirUltraHonkProver,
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use num_bigint::BigUint;
 use ultrahonk::prelude::{
     HonkCurve, HonkProofResult, TranscriptFieldType, Univariate, POSEIDON2_BN254_T4_PARAMS,
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct Poseidon2InternalRelationAcc<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(crate) struct Poseidon2InternalRelationAcc<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) r0: SharedUnivariate<T, P, 7>,
     pub(crate) r1: SharedUnivariate<T, P, 7>,
     pub(crate) r2: SharedUnivariate<T, P, 7>,
     pub(crate) r3: SharedUnivariate<T, P, 7>,
 }
 
-impl<T, P: Pairing> Default for Poseidon2InternalRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for Poseidon2InternalRelationAcc<T, P> {
     fn default() -> Self {
         Self {
             r0: Default::default(),
@@ -36,16 +32,13 @@ where
     }
 }
 
-impl<T, P: Pairing> Poseidon2InternalRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Poseidon2InternalRelationAcc<T, P> {
     pub(crate) fn scale(&mut self, driver: &mut T, elements: &[P::ScalarField]) {
         assert!(elements.len() == Poseidon2InternalRelation::NUM_RELATIONS);
-        self.r0.scale_inplace(driver, &elements[0]);
-        self.r1.scale_inplace(driver, &elements[1]);
-        self.r2.scale_inplace(driver, &elements[2]);
-        self.r3.scale_inplace(driver, &elements[3]);
+        self.r0.scale_inplace(driver, elements[0]);
+        self.r1.scale_inplace(driver, elements[1]);
+        self.r2.scale_inplace(driver, elements[2]);
+        self.r3.scale_inplace(driver, elements[3]);
     }
 
     pub(crate) fn extend_and_batch_univariates<const SIZE: usize>(
@@ -93,11 +86,11 @@ pub(crate) struct Poseidon2InternalRelation {}
 
 impl Poseidon2InternalRelation {
     pub(crate) const NUM_RELATIONS: usize = 4;
+    pub(crate) const CRAND_PAIRS_FACTOR: usize = 3;
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> Relation<T, P> for Poseidon2InternalRelation
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> Relation<T, P>
+    for Poseidon2InternalRelation
 {
     type Acc = Poseidon2InternalRelationAcc<T, P>;
     const SKIPPABLE: bool = true;
@@ -126,7 +119,7 @@ where
      * @param parameters contains beta, gamma, and public_input_delta, ....
      * @param scaling_factor optional term to scale the evaluation before adding to evals.
      */
-    fn accumulate(
+    async fn accumulate(
         driver: &mut T,
         univariate_accumulator: &mut Self::Acc,
         input: &ProverUnivariates<T, P>,
@@ -150,9 +143,9 @@ where
         let s1 = w_l.add_public(driver, q_l);
 
         // apply s-box round
-        let u1 = driver.mul_many(s1.as_ref(), s1.as_ref())?;
-        let u1 = driver.mul_many(u1.as_ref(), u1.as_ref())?;
-        let u1 = driver.mul_many(u1.as_ref(), s1.as_ref())?;
+        let u1 = driver.mul_many(s1.as_ref(), s1.as_ref()).await?;
+        let u1 = driver.mul_many(u1.as_ref(), u1.as_ref()).await?;
+        let u1 = driver.mul_many(u1.as_ref(), s1.as_ref()).await?;
         let mut u2 = w_r.to_owned();
         let mut u3 = w_o.to_owned();
         let mut u4 = w_4.to_owned();
@@ -177,61 +170,53 @@ where
             POSEIDON2_BN254_T4_PARAMS.mat_internal_diag_m_1[3],
         ));
 
-        u1.scale_inplace(driver, &internal_matrix_diag_0);
+        u1.scale_inplace(driver, internal_matrix_diag_0);
         let v1 = u1.add(driver, &sum);
         let tmp = v1
             .sub(driver, w_l_shift)
             .mul_public(driver, &q_pos_by_scaling);
 
         for i in 0..univariate_accumulator.r0.evaluations.len() {
-            univariate_accumulator.r0.evaluations[i] = driver.add(
-                &univariate_accumulator.r0.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r0.evaluations[i] =
+                driver.add(univariate_accumulator.r0.evaluations[i], tmp.evaluations[i]);
         }
 
         ///////////////////////////////////////////////////////////////////////
 
-        u2.scale_inplace(driver, &internal_matrix_diag_1);
+        u2.scale_inplace(driver, internal_matrix_diag_1);
         let v2 = u2.add(driver, &sum);
         let tmp = v2
             .sub(driver, w_r_shift)
             .mul_public(driver, &q_pos_by_scaling);
 
         for i in 0..univariate_accumulator.r1.evaluations.len() {
-            univariate_accumulator.r1.evaluations[i] = driver.add(
-                &univariate_accumulator.r1.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r1.evaluations[i] =
+                driver.add(univariate_accumulator.r1.evaluations[i], tmp.evaluations[i]);
         }
 
         ///////////////////////////////////////////////////////////////////////
 
-        u3.scale_inplace(driver, &internal_matrix_diag_2);
+        u3.scale_inplace(driver, internal_matrix_diag_2);
         let v3 = u3.add(driver, &sum);
         let tmp = v3
             .sub(driver, w_o_shift)
             .mul_public(driver, &q_pos_by_scaling);
 
         for i in 0..univariate_accumulator.r2.evaluations.len() {
-            univariate_accumulator.r2.evaluations[i] = driver.add(
-                &univariate_accumulator.r2.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r2.evaluations[i] =
+                driver.add(univariate_accumulator.r2.evaluations[i], tmp.evaluations[i]);
         }
 
         ///////////////////////////////////////////////////////////////////////
-        u4.scale_inplace(driver, &internal_matrix_diag_3);
+        u4.scale_inplace(driver, internal_matrix_diag_3);
         let v4 = u4.add(driver, &sum);
         let tmp = v4
             .sub(driver, w_4_shift)
             .mul_public(driver, &q_pos_by_scaling);
 
         for i in 0..univariate_accumulator.r3.evaluations.len() {
-            univariate_accumulator.r3.evaluations[i] = driver.add(
-                &univariate_accumulator.r3.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r3.evaluations[i] =
+                driver.add(univariate_accumulator.r3.evaluations[i], tmp.evaluations[i]);
         }
 
         Ok(())

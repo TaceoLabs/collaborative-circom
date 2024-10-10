@@ -11,6 +11,7 @@ ark-bls12-381 = { workspace = true }
 ark-bn254 = { workspace = true }
 ark-ec = { workspace = true }
 ark-ff = { workspace = true }
+ark-std = { workspace = true }
 ark-serialize = { workspace = true }
 bytes = { workspace = true }
 circom-mpc-compiler = { version = "0.6.1", path = "../co-circom/circom-mpc-compiler" }
@@ -24,6 +25,8 @@ co-groth16 = { version = "0.5.1", path = "../co-circom/co-groth16", features = [
 co-plonk = { version = "0.3.1", path = "../co-circom/co-plonk" }
 co-ultrahonk = { version = "0.1.0", path = "../co-noir/co-ultrahonk" }
 criterion = { workspace = true }
+eyre = { workspace = true }
+futures.workspace = true
 itertools = { workspace = true }
 mpc-core = { version = "0.5.0", path = "../mpc-core" }
 noirc-artifacts = { workspace = true }

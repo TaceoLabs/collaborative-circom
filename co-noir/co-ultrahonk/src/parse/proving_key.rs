@@ -1,4 +1,5 @@
 use super::CoUltraCircuitBuilder;
+use crate::mpc::NoirUltraHonkProver;
 use crate::parse::types::TraceData;
 use crate::types::Polynomials;
 use crate::types::ProverWitnessEntities;
@@ -6,7 +7,6 @@ use crate::types::ProvingKey;
 use ark_ec::pairing::Pairing;
 use ark_ff::One;
 use eyre::Result;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use std::marker::PhantomData;
 use ultrahonk::prelude::Crs;
 use ultrahonk::prelude::HonkProofResult;
@@ -17,15 +17,16 @@ use ultrahonk::prelude::UltraCircuitVariable;
 use ultrahonk::prelude::VerifyingKey;
 use ultrahonk::Utils;
 
-impl<T, P: Pairing> ProvingKey<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> ProvingKey<T, P> {
     const PUBLIC_INPUT_WIRE_INDEX: usize =
-        ProverWitnessEntities::<T::FieldShare, P::ScalarField>::W_R;
+        ProverWitnessEntities::<T::ArithmeticShare, P::ScalarField>::W_R;
 
     // We ignore the TraceStructure for now (it is None in barretenberg for UltraHonk)
-    pub fn create(driver: &T, mut circuit: CoUltraCircuitBuilder<T, P>, crs: ProverCrs<P>) -> Self {
+    pub fn create(
+        id: T::PartyID,
+        mut circuit: CoUltraCircuitBuilder<T, P>,
+        crs: ProverCrs<P>,
+    ) -> Self {
         tracing::info!("ProvingKey create");
         circuit.add_gates_to_ensure_all_polys_are_non_zero();
         circuit.finalize_circuit();
@@ -33,7 +34,7 @@ where
         let dyadic_circuit_size = circuit.compute_dyadic_size();
         let mut proving_key = Self::new(dyadic_circuit_size, circuit.public_inputs.len(), crs);
         // Construct and add to proving key the wire, selector and copy constraint polynomials
-        proving_key.populate_trace(driver, &mut circuit, false);
+        proving_key.populate_trace(id, &mut circuit, false);
 
         // First and last lagrange polynomials (in the full circuit size)
         proving_key.polynomials.precomputed.lagrange_first_mut()[0] = P::ScalarField::one();
@@ -76,7 +77,7 @@ where
     }
 
     pub fn create_keys(
-        driver: &T,
+        id: T::PartyID,
         circuit: CoUltraCircuitBuilder<T, P>,
         crs: Crs<P>,
     ) -> HonkProofResult<(Self, VerifyingKey<P>)> {
@@ -85,7 +86,7 @@ where
         };
         let verifier_crs = crs.g2_x;
 
-        let pk = ProvingKey::create(driver, circuit, prover_crs);
+        let pk = ProvingKey::create(id, circuit, prover_crs);
         let circuit_size = pk.circuit_size;
 
         let mut commitments = PrecomputedEntities::default();
@@ -147,14 +148,14 @@ where
 
     fn populate_trace(
         &mut self,
-        driver: &T,
+        id: T::PartyID,
         builder: &mut CoUltraCircuitBuilder<T, P>,
         is_strucutred: bool,
     ) {
         tracing::info!("Populating trace");
 
         let mut trace_data = TraceData::new(builder, self);
-        trace_data.construct_trace_data(driver, builder, is_strucutred);
+        trace_data.construct_trace_data(id, builder, is_strucutred);
 
         let ram_rom_offset = trace_data.ram_rom_offset;
         let copy_cycles = trace_data.copy_cycles;

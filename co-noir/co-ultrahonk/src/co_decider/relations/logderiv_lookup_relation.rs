@@ -1,26 +1,22 @@
 use super::Relation;
-use crate::co_decider::{
-    types::{ProverUnivariates, RelationParameters, MAX_PARTIAL_RELATION_LENGTH},
-    univariates::SharedUnivariate,
+use crate::{
+    co_decider::{
+        types::{ProverUnivariates, RelationParameters, MAX_PARTIAL_RELATION_LENGTH},
+        univariates::SharedUnivariate,
+    },
+    mpc::NoirUltraHonkProver,
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use ultrahonk::prelude::{HonkCurve, HonkProofResult, TranscriptFieldType, Univariate};
 
 #[derive(Clone, Debug)]
-pub(crate) struct LogDerivLookupRelationAcc<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+pub(crate) struct LogDerivLookupRelationAcc<T: NoirUltraHonkProver<P>, P: Pairing> {
     pub(crate) r0: SharedUnivariate<T, P, 5>,
     pub(crate) r1: SharedUnivariate<T, P, 5>,
 }
 
-impl<T, P: Pairing> Default for LogDerivLookupRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> Default for LogDerivLookupRelationAcc<T, P> {
     fn default() -> Self {
         Self {
             r0: Default::default(),
@@ -29,14 +25,11 @@ where
     }
 }
 
-impl<T, P: Pairing> LogDerivLookupRelationAcc<T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<T: NoirUltraHonkProver<P>, P: Pairing> LogDerivLookupRelationAcc<T, P> {
     pub(crate) fn scale(&mut self, driver: &mut T, elements: &[P::ScalarField]) {
         assert!(elements.len() == LogDerivLookupRelation::NUM_RELATIONS);
-        self.r0.scale_inplace(driver, &elements[0]);
-        self.r1.scale_inplace(driver, &elements[1]);
+        self.r0.scale_inplace(driver, elements[0]);
+        self.r1.scale_inplace(driver, elements[1]);
     }
 
     pub(crate) fn extend_and_batch_univariates<const SIZE: usize>(
@@ -68,30 +61,25 @@ pub(crate) struct LogDerivLookupRelation {}
 
 impl LogDerivLookupRelation {
     pub(crate) const NUM_RELATIONS: usize = 2;
+    pub(crate) const CRAND_PAIRS_FACTOR: usize = 1;
 }
 
 impl LogDerivLookupRelation {
     // Used in the inverse correctness subrelation; facilitates only computing inverses where necessary
-    fn compute_inverse_exists<T, P: Pairing>(
+    fn compute_inverse_exists<T: NoirUltraHonkProver<P>, P: Pairing>(
         input: &ProverUnivariates<T, P>,
-    ) -> Univariate<P::ScalarField, MAX_PARTIAL_RELATION_LENGTH>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
+    ) -> Univariate<P::ScalarField, MAX_PARTIAL_RELATION_LENGTH> {
         let row_has_write = input.witness.lookup_read_tags();
         let row_has_read = input.precomputed.q_lookup();
 
         -(row_has_write.to_owned() * row_has_read) + row_has_write + row_has_read
     }
 
-    fn compute_read_term<T, P: Pairing>(
+    fn compute_read_term<T: NoirUltraHonkProver<P>, P: Pairing>(
         driver: &mut T,
         input: &ProverUnivariates<T, P>,
         relation_parameters: &RelationParameters<P::ScalarField>,
-    ) -> SharedUnivariate<T, P, MAX_PARTIAL_RELATION_LENGTH>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
+    ) -> SharedUnivariate<T, P, MAX_PARTIAL_RELATION_LENGTH> {
         let gamma = &relation_parameters.gamma;
         let eta_1 = &relation_parameters.eta_1;
         let eta_2 = &relation_parameters.eta_2;
@@ -113,7 +101,7 @@ impl LogDerivLookupRelation {
         let derived_table_entry_1 = w_1_shift
             .mul_public(driver, negative_column_1_step_size)
             .add(driver, w_1)
-            .add_scalar(driver, gamma);
+            .add_scalar(driver, *gamma);
         let mut derived_table_entry_2 = w_2_shift
             .mul_public(driver, negative_column_2_step_size)
             .add(driver, w_2);
@@ -123,8 +111,8 @@ impl LogDerivLookupRelation {
 
         // (w_1 + \gamma q_2*w_1_shift) + η(w_2 + q_m*w_2_shift) + η₂(w_3 + q_c*w_3_shift) + η₃q_index.
         // deg 2 or 3
-        derived_table_entry_2.scale_inplace(driver, eta_1);
-        derived_table_entry_3.scale_inplace(driver, eta_2);
+        derived_table_entry_2.scale_inplace(driver, *eta_1);
+        derived_table_entry_3.scale_inplace(driver, *eta_2);
 
         derived_table_entry_1
             .add(driver, &derived_table_entry_2)
@@ -133,13 +121,10 @@ impl LogDerivLookupRelation {
     }
 
     // Compute table_1 + gamma + table_2 * eta + table_3 * eta_2 + table_4 * eta_3
-    fn compute_write_term<T, P: Pairing>(
+    fn compute_write_term<T: NoirUltraHonkProver<P>, P: Pairing>(
         input: &ProverUnivariates<T, P>,
         relation_parameters: &RelationParameters<P::ScalarField>,
-    ) -> Univariate<P::ScalarField, MAX_PARTIAL_RELATION_LENGTH>
-    where
-        T: PrimeFieldMpcProtocol<P::ScalarField>,
-    {
+    ) -> Univariate<P::ScalarField, MAX_PARTIAL_RELATION_LENGTH> {
         let gamma = &relation_parameters.gamma;
         let eta_1 = &relation_parameters.eta_1;
         let eta_2 = &relation_parameters.eta_2;
@@ -158,9 +143,8 @@ impl LogDerivLookupRelation {
     }
 }
 
-impl<T, P: HonkCurve<TranscriptFieldType>> Relation<T, P> for LogDerivLookupRelation
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
+impl<T: NoirUltraHonkProver<P>, P: HonkCurve<TranscriptFieldType>> Relation<T, P>
+    for LogDerivLookupRelation
 {
     type Acc = LogDerivLookupRelationAcc<T, P>;
     const SKIPPABLE: bool = true;
@@ -207,7 +191,7 @@ where
      * @note This relation utilizes functionality in the log-derivative library to compute the polynomial of inverses
      *
      */
-    fn accumulate(
+    async fn accumulate(
         driver: &mut T,
         univariate_accumulator: &mut Self::Acc,
         input: &ProverUnivariates<T, P>,
@@ -223,7 +207,9 @@ where
         let inverse_exists = Self::compute_inverse_exists(input); // Degree 2
         let read_term = Self::compute_read_term(driver, input, relation_parameters); // Degree 2 (3)
         let write_term = Self::compute_write_term(input, relation_parameters); // Degree 1 (2)
-        let mul = driver.mul_many(read_term.as_ref(), inverses.as_ref())?;
+        let mul = driver
+            .mul_many(read_term.as_ref(), inverses.as_ref())
+            .await?;
         let write_inverse = SharedUnivariate::from_vec(&mul); // Degree 3 (4)
         let read_inverse = inverses.mul_public(driver, &write_term); // Degree 2 (3)
 
@@ -233,12 +219,10 @@ where
         let tmp = write_inverse
             .mul_public(driver, &write_term)
             .sub_public(driver, &inverse_exists)
-            .scale(driver, scaling_factor); // Deg 4 (6)
+            .scale(driver, *scaling_factor); // Deg 4 (6)
         for i in 0..univariate_accumulator.r0.evaluations.len() {
-            univariate_accumulator.r0.evaluations[i] = driver.add(
-                &univariate_accumulator.r0.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r0.evaluations[i] =
+                driver.add(univariate_accumulator.r0.evaluations[i], tmp.evaluations[i]);
         }
 
         ///////////////////////////////////////////////////////////////////////
@@ -251,10 +235,8 @@ where
             .mul_public(driver, read_selector)
             .sub(driver, &tmp); // Deg 4 (5)
         for i in 0..univariate_accumulator.r1.evaluations.len() {
-            univariate_accumulator.r1.evaluations[i] = driver.add(
-                &univariate_accumulator.r1.evaluations[i],
-                &tmp.evaluations[i],
-            );
+            univariate_accumulator.r1.evaluations[i] =
+                driver.add(univariate_accumulator.r1.evaluations[i], tmp.evaluations[i]);
         }
 
         Ok(())

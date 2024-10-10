@@ -6,8 +6,10 @@ use acir::{
 use ark_ec::pairing::Pairing;
 use ark_ff::Zero;
 use clap::{Args, ValueEnum};
-use co_acvm::solver::Rep3CoSolver;
-use co_ultrahonk::prelude::{SharedBuilderVariable, UltraCircuitVariable};
+use co_acvm::{solver::Rep3CoSolver, Rep3AcvmType};
+use co_ultrahonk::prelude::{
+    Rep3UltraHonkDriver, ShamirUltraHonkDriver, SharedBuilderVariable, UltraCircuitVariable,
+};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     Figment,
@@ -16,10 +18,9 @@ use mpc_core::protocols::{
     rep3::{
         self,
         network::{Rep3MpcNet, Rep3Network},
-        witness_extension_impl::Rep3VmType,
-        Rep3PrimeFieldShare, Rep3Protocol,
+        Rep3PrimeFieldShare,
     },
-    shamir::{self, network::ShamirNetwork, ShamirProtocol},
+    shamir::{self, network::ShamirNetwork},
 };
 use mpc_net::config::NetworkConfig;
 use noirc_abi::Abi;
@@ -427,7 +428,7 @@ impl_config!(VerifyCli, VerifyConfig);
 pub fn share_rep3<P: Pairing, N: Rep3Network, R: Rng + CryptoRng>(
     witness: Vec<PubShared<P::ScalarField>>,
     rng: &mut R,
-) -> [Vec<SharedBuilderVariable<Rep3Protocol<P::ScalarField, N>, P>>; 3] {
+) -> [Vec<SharedBuilderVariable<Rep3UltraHonkDriver<N>, P>>; 3] {
     let mut res = array::from_fn(|_| Vec::with_capacity(witness.len()));
 
     for witness in witness {
@@ -439,7 +440,7 @@ pub fn share_rep3<P: Pairing, N: Rep3Network, R: Rng + CryptoRng>(
             }
             PubShared::Shared(f) => {
                 // res.push(SharedBuilderVariable::from_shared(f));
-                let shares = rep3::utils::share_field_element(f, rng);
+                let shares = rep3::share_field_element(f, rng);
                 for (r, share) in res.iter_mut().zip(shares) {
                     r.push(SharedBuilderVariable::from_shared(share));
                 }
@@ -455,7 +456,7 @@ pub fn share_shamir<P: Pairing, N: ShamirNetwork, R: Rng + CryptoRng>(
     degree: usize,
     num_parties: usize,
     rng: &mut R,
-) -> Vec<Vec<SharedBuilderVariable<ShamirProtocol<P::ScalarField, N>, P>>> {
+) -> Vec<Vec<SharedBuilderVariable<ShamirUltraHonkDriver<P::ScalarField, N>, P>>> {
     let mut res = (0..num_parties)
         .map(|_| Vec::with_capacity(witness.len()))
         .collect::<Vec<_>>();
@@ -469,7 +470,7 @@ pub fn share_shamir<P: Pairing, N: ShamirNetwork, R: Rng + CryptoRng>(
             }
             PubShared::Shared(f) => {
                 // res.push(SharedBuilderVariable::from_shared(f));
-                let shares = shamir::utils::share_field_element(f, degree, num_parties, rng);
+                let shares = shamir::share_field_element(f, degree, num_parties, rng);
                 for (r, share) in res.iter_mut().zip(shares) {
                     r.push(SharedBuilderVariable::from_shared(share));
                 }
@@ -486,7 +487,7 @@ pub fn share_input_rep3<P: Pairing, N: Rep3Network, R: Rng + CryptoRng>(
     let mut witnesses = array::from_fn(|_| BTreeMap::default());
     for (witness, v) in initial_witness.into_iter() {
         let v = v.into_repr();
-        let shares = rep3::utils::share_field_element(v, rng);
+        let shares = rep3::share_field_element(v, rng);
         for (w, share) in witnesses.iter_mut().zip(shares) {
             w.insert(witness.to_owned(), share);
         }
@@ -498,13 +499,13 @@ pub fn share_input_rep3<P: Pairing, N: Rep3Network, R: Rng + CryptoRng>(
 pub fn translate_witness_share_rep3(
     witness: BTreeMap<String, Rep3PrimeFieldShare<ark_bn254::Fr>>,
     abi: &Abi,
-) -> color_eyre::Result<WitnessMap<Rep3VmType<ark_bn254::Fr>>> {
+) -> color_eyre::Result<WitnessMap<Rep3AcvmType<ark_bn254::Fr>>> {
     Rep3CoSolver::<ark_bn254::Fr, Rep3MpcNet>::witness_map_from_string_map(witness, abi)
 }
 
 pub fn convert_witness_to_vec_rep3<P: Pairing, N: Rep3Network>(
-    mut witness_stack: WitnessStack<Rep3VmType<P::ScalarField>>,
-) -> Vec<SharedBuilderVariable<Rep3Protocol<P::ScalarField, N>, P>> {
+    mut witness_stack: WitnessStack<Rep3AcvmType<P::ScalarField>>,
+) -> Vec<SharedBuilderVariable<Rep3UltraHonkDriver<N>, P>> {
     let witness_map = witness_stack
         .pop()
         .expect("Witness should be present")
@@ -521,13 +522,12 @@ pub fn convert_witness_to_vec_rep3<P: Pairing, N: Rep3Network>(
             index += 1;
         }
         match f {
-            Rep3VmType::Public(f) => {
+            Rep3AcvmType::Public(f) => {
                 wv.push(SharedBuilderVariable::from_public(f));
             }
-            Rep3VmType::Shared(f) => {
+            Rep3AcvmType::Shared(f) => {
                 wv.push(SharedBuilderVariable::from_shared(f));
             }
-            Rep3VmType::BitShared => panic!("BitShared not supported"),
         }
         index += 1;
     }

@@ -1,24 +1,38 @@
 //! A Groth16 proof protocol that uses a collaborative MPC protocol to generate the proof.
 use ark_ec::pairing::Pairing;
+use ark_ec::scalar_mul::variable_base::VariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{FftField, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-use ark_relations::r1cs::{ConstraintMatrices, SynthesisError};
+use ark_relations::r1cs::{ConstraintMatrices, Matrix, SynthesisError};
 use circom_types::groth16::{Groth16Proof, ZKey};
 use circom_types::traits::{CircomArkworksPairingBridge, CircomArkworksPrimeFieldBridge};
 use co_circom_snarks::SharedWitness;
 use eyre::Result;
-use itertools::izip;
-use mpc_core::protocols::plain::PlainDriver;
-use mpc_core::traits::{EcMpcProtocol, MSMProvider};
-use mpc_core::{
-    protocols::rep3::{network::Rep3MpcNet, Rep3Protocol},
-    traits::{FFTProvider, PairingEcMpcProtocol, PrimeFieldMpcProtocol},
-};
+use mpc_core::protocols::rep3::network::{IoContext, Rep3MpcNet};
+use mpc_core::protocols::shamir::network::ShamirMpcNet;
+use mpc_core::protocols::shamir::{ShamirPreprocessing, ShamirProtocol};
 use mpc_net::config::NetworkConfig;
 use num_traits::identities::One;
 use num_traits::ToPrimitive;
+use rayon::prelude::*;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::oneshot;
+use tracing::instrument;
+
+use crate::mpc::plain::PlainGroth16Driver;
+use crate::mpc::rep3::Rep3Groth16Driver;
+use crate::mpc::shamir::ShamirGroth16Driver;
+use crate::mpc::CircomGroth16Prover;
+
+macro_rules! rayon_join {
+    ($t1: expr, $t2: expr, $t3: expr) => {{
+        let ((x, y), z) = rayon::join(|| rayon::join(|| $t1, || $t2), || $t3);
+        (x, y, z)
+    }};
+}
 
 /// The plain [`Groth16`] type.
 ///
@@ -30,17 +44,12 @@ use std::marker::PhantomData;
 ///
 /// More interesting is the [`Groth16::verify`] method. You can verify any circom Groth16 proof, be it
 /// from snarkjs or one created by this project. Under the hood we use the arkwork Groth16 project for verifying.
-pub type Groth16<P> = CoGroth16<PlainDriver<<P as Pairing>::ScalarField>, P>;
+pub type Groth16<P> = CoGroth16<P, PlainGroth16Driver>;
 
 /// A type alias for a [CoGroth16] protocol using replicated secret sharing.
-pub type Rep3CoGroth16<P> = CoGroth16<Rep3Protocol<<P as Pairing>::ScalarField, Rep3MpcNet>, P>;
-
-type FieldShare<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShare;
-type FieldShareVec<T, P> = <T as PrimeFieldMpcProtocol<<P as Pairing>::ScalarField>>::FieldShareVec;
-type PointShare<T, C> = <T as EcMpcProtocol<C>>::PointShare;
-type CurveFieldShareVec<T, C> = <T as PrimeFieldMpcProtocol<
-    <<C as CurveGroup>::Affine as AffineRepr>::ScalarField,
->>::FieldShareVec;
+pub type Rep3CoGroth16<P, N> = CoGroth16<P, Rep3Groth16Driver<N>>;
+/// A type alias for a [CoGroth16] protocol using shamir secret sharing.
+pub type ShamirCoGroth16<P, N> = CoGroth16<P, ShamirGroth16Driver<<P as Pairing>::ScalarField, N>>;
 
 /* old way of computing root of unity, does not work for bls12_381:
 let root_of_unity = {
@@ -54,6 +63,7 @@ calculate smallest quadratic non residue q (by checking q^((p-1)/2)=-1 mod p) al
 use g=q^t (this is a 2^s-th root of unity) as (some kind of) generator and compute another domain by repeatedly squaring g, should get to 1 in the s+1-th step.
 then if log2(domain_size) equals s we take as root of unity q^2, and else we take the log2(domain_size) + 1-th element of the domain created above
 */
+#[instrument(level = "debug", name = "root of unity", skip_all)]
 fn root_of_unity_for_groth16<F: PrimeField + FftField>(
     pow: usize,
     domain: &mut GeneralEvaluationDomain<F>,
@@ -77,26 +87,13 @@ fn root_of_unity_for_groth16<F: PrimeField + FftField>(
 }
 
 /// A Groth16 proof protocol that uses a collaborative MPC protocol to generate the proof.
-pub struct CoGroth16<T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-{
+pub struct CoGroth16<P: Pairing, T: CircomGroth16Prover<P>> {
     pub(crate) driver: T,
     phantom_data: PhantomData<P>,
 }
 
-impl<T, P: Pairing> CoGroth16<T, P>
+impl<P: Pairing + CircomArkworksPairingBridge, T: CircomGroth16Prover<P>> CoGroth16<P, T>
 where
-    T: PrimeFieldMpcProtocol<P::ScalarField>
-        + PairingEcMpcProtocol<P>
-        + FFTProvider<P::ScalarField>
-        + MSMProvider<P::G1>
-        + MSMProvider<P::G2>,
-    P: CircomArkworksPairingBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
@@ -110,211 +107,370 @@ where
 
     /// Execute the Groth16 prover using the internal MPC driver.
     /// This version takes the Circom-generated constraint matrices as input and does not re-calculate them.
-    pub fn prove(
-        &mut self,
+    #[instrument(level = "debug", name = "Groth16 - Proof", skip_all)]
+    pub async fn prove(
+        mut self,
         zkey: &ZKey<P>,
-        private_witness: SharedWitness<T, P>,
+        private_witness: SharedWitness<P::ScalarField, T::ArithmeticShare>,
     ) -> Result<Groth16Proof<P>> {
+        let id = self.driver.get_party_id();
+        tracing::info!("Party {}: starting proof generation..", id);
+        let start = Instant::now();
         let matrices = &zkey.matrices;
         let num_inputs = matrices.num_instance_variables;
         let num_constraints = matrices.num_constraints;
-        let public_inputs = &private_witness.public_inputs;
-        let private_witness = &private_witness.witness;
-        tracing::debug!("calling witness map from matrices...");
-        let h = self.witness_map_from_matrices(
-            zkey.pow,
-            matrices,
-            num_constraints,
-            num_inputs,
-            public_inputs,
-            private_witness,
-        )?;
-        tracing::debug!("done!");
-        tracing::debug!("getting r and s...");
-        let r = self.driver.rand()?;
-        let s = self.driver.rand()?;
-        tracing::debug!("done!");
-        tracing::debug!("calling create_proof_with_assignment...");
-        self.create_proof_with_assignment(zkey, r, s, &h, &public_inputs[1..], private_witness)
+        let public_inputs = Arc::new(private_witness.public_inputs);
+        let private_witness = Arc::new(private_witness.witness);
+        let h = self
+            .witness_map_from_matrices(
+                zkey.pow,
+                matrices,
+                num_constraints,
+                num_inputs,
+                &public_inputs,
+                &private_witness,
+            )
+            .await?;
+        let (r, s) = (self.driver.rand()?, self.driver.rand()?);
+        let proof = self
+            .create_proof_with_assignment(zkey, r, s, h, public_inputs, private_witness)
+            .await?;
+
+        let duration_ms = start.elapsed().as_micros() as f64 / 1000.;
+        tracing::info!("Party {}: Proof generation took {} ms", id, duration_ms);
+        Ok(proof)
     }
 
-    fn witness_map_from_matrices(
+    fn evaluate_constraint(
+        party_id: T::PartyID,
+        domain_size: usize,
+        matrix: &Matrix<P::ScalarField>,
+        public_inputs: &[P::ScalarField],
+        private_witness: &[T::ArithmeticShare],
+    ) -> Vec<T::ArithmeticShare> {
+        let mut result = matrix
+            .par_iter()
+            .with_min_len(32)
+            .map(|x| T::evaluate_constraint(party_id, x, public_inputs, private_witness))
+            .collect::<Vec<_>>();
+        result.resize(domain_size, T::ArithmeticShare::default());
+        result
+    }
+
+    #[instrument(level = "debug", name = "witness map from matrices", skip_all)]
+    async fn witness_map_from_matrices(
         &mut self,
         power: usize,
         matrices: &ConstraintMatrices<P::ScalarField>,
         num_constraints: usize,
         num_inputs: usize,
         public_inputs: &[P::ScalarField],
-        private_witness: &FieldShareVec<T, P>,
-    ) -> Result<FieldShareVec<T, P>> {
+        private_witness: &[T::ArithmeticShare],
+    ) -> Result<Vec<P::ScalarField>> {
         let mut domain =
             GeneralEvaluationDomain::<P::ScalarField>::new(num_constraints + num_inputs)
                 .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let root_of_unity = root_of_unity_for_groth16(power, &mut domain);
-
         let domain_size = domain.size();
-        let mut a = vec![FieldShare::<T, P>::default(); domain_size];
-        let mut b = vec![FieldShare::<T, P>::default(); domain_size];
-        tracing::debug!("evaluating constraints..");
-        for (a, b, at_i, bt_i) in izip!(&mut a, &mut b, &matrices.a, &matrices.b) {
-            *a = self
-                .driver
-                .evaluate_constraint(at_i, public_inputs, private_witness);
-            *b = self
-                .driver
-                .evaluate_constraint(bt_i, public_inputs, private_witness);
-        }
-        tracing::debug!("done!");
-        let mut a = FieldShareVec::<T, P>::from(a);
-        let promoted_public = self.driver.promote_to_trivial_shares(public_inputs);
-        self.driver
-            .clone_from_slice(&mut a, &promoted_public, num_constraints, 0, num_inputs);
-
-        let mut b = FieldShareVec::<T, P>::from(b);
-        let mut c = self.driver.mul_vec(&a, &b)?;
-        self.driver.ifft_in_place(&mut a, &domain);
-        self.driver.ifft_in_place(&mut b, &domain);
-        self.driver.distribute_powers_and_mul_by_const(
-            &mut a,
-            root_of_unity,
-            P::ScalarField::one(),
+        let party_id = self.driver.get_party_id();
+        let eval_constraint_span =
+            tracing::debug_span!("evaluate constraints + root of unity computation").entered();
+        let (roots_to_power_domain, a, b) = rayon_join!(
+            {
+                let root_of_unity_span =
+                    tracing::debug_span!("root of unity computation").entered();
+                let root_of_unity = root_of_unity_for_groth16(power, &mut domain);
+                let mut roots = Vec::with_capacity(domain_size);
+                let mut c = P::ScalarField::one();
+                for _ in 0..domain_size {
+                    roots.push(c);
+                    c *= root_of_unity;
+                }
+                root_of_unity_span.exit();
+                Arc::new(roots)
+            },
+            {
+                let eval_constraint_span_a =
+                    tracing::debug_span!("evaluate constraints - a").entered();
+                let mut result = Self::evaluate_constraint(
+                    party_id,
+                    domain_size,
+                    &matrices.a,
+                    public_inputs,
+                    private_witness,
+                );
+                let promoted_public = T::promote_to_trivial_shares(party_id, public_inputs);
+                result[num_constraints..num_constraints + num_inputs]
+                    .clone_from_slice(&promoted_public[..num_inputs]);
+                eval_constraint_span_a.exit();
+                result
+            },
+            {
+                let eval_constraint_span_b =
+                    tracing::debug_span!("evaluate constraints - a").entered();
+                let result = Self::evaluate_constraint(
+                    party_id,
+                    domain_size,
+                    &matrices.b,
+                    public_inputs,
+                    private_witness,
+                );
+                eval_constraint_span_b.exit();
+                result
+            }
         );
-        self.driver.distribute_powers_and_mul_by_const(
-            &mut b,
-            root_of_unity,
-            P::ScalarField::one(),
-        );
-        self.driver.fft_in_place(&mut a, &domain);
-        self.driver.fft_in_place(&mut b, &domain);
-        //this can be in-place so that we do not have to allocate memory
-        let mut ab = self.driver.mul_vec(&a, &b)?;
-        std::mem::drop(a);
-        std::mem::drop(b);
 
-        self.driver.ifft_in_place(&mut c, &domain);
-        self.driver.distribute_powers_and_mul_by_const(
-            &mut c,
-            root_of_unity,
-            P::ScalarField::one(),
-        );
-        self.driver.fft_in_place(&mut c, &domain);
+        let domain = Arc::new(domain);
+        eval_constraint_span.exit();
 
-        self.driver.sub_assign_vec(&mut ab, &c);
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let (c_tx, c_rx) = oneshot::channel();
+        let a_domain = Arc::clone(&domain);
+        let b_domain = Arc::clone(&domain);
+        let c_domain = Arc::clone(&domain);
+        let mut a_result = a.clone();
+        let mut b_result = b.clone();
+        let a_roots = Arc::clone(&roots_to_power_domain);
+        let b_roots = Arc::clone(&roots_to_power_domain);
+        let c_roots = Arc::clone(&roots_to_power_domain);
+        rayon::spawn(move || {
+            let a_span = tracing::debug_span!("distribute powers mul a (fft/ifft)").entered();
+            a_domain.ifft_in_place(&mut a_result);
+            T::distribute_powers_and_mul_by_const(&mut a_result, &a_roots);
+            a_domain.fft_in_place(&mut a_result);
+            a_tx.send(a_result).expect("channel not droped");
+            a_span.exit();
+        });
+
+        rayon::spawn(move || {
+            let b_span = tracing::debug_span!("distribute powers mul b (fft/ifft)").entered();
+            b_domain.ifft_in_place(&mut b_result);
+            T::distribute_powers_and_mul_by_const(&mut b_result, &b_roots);
+            b_domain.fft_in_place(&mut b_result);
+            b_tx.send(b_result).expect("channel not droped");
+            b_span.exit();
+        });
+
+        let local_mul_vec_span = tracing::debug_span!("c: local_mul_vec").entered();
+        // this performs some heavy computation on the tokio runtime.
+        // it doesn't matter because we do not perform any IO at this moment, so the thread
+        // is not needed for driving IO
+        let mut ab = self.driver.local_mul_vec(a, b);
+        local_mul_vec_span.exit();
+        rayon::spawn(move || {
+            let ifft_span = tracing::debug_span!("c: ifft in dist pows").entered();
+            c_domain.ifft_in_place(&mut ab);
+            ifft_span.exit();
+            let dist_pows_span = tracing::debug_span!("c: dist pows").entered();
+            #[allow(unused_mut)]
+            ab.par_iter_mut()
+                .zip_eq(c_roots.par_iter())
+                .with_min_len(512)
+                .for_each(|(share, pow)| {
+                    *share *= pow;
+                });
+            dist_pows_span.exit();
+            let fft_span = tracing::debug_span!("c: fft in dist pows").entered();
+            c_domain.fft_in_place(&mut ab);
+            fft_span.exit();
+            c_tx.send(ab).expect("channel not dropped");
+        });
+
+        let a = a_rx.await?;
+        let b = b_rx.await?;
+
+        let compute_ab_span = tracing::debug_span!("compute ab").entered();
+        let local_ab_span = tracing::debug_span!("local part (mul and sub)").entered();
+        // same as above. No IO task is run at the moment.
+        let mut ab = self.driver.local_mul_vec(a, b);
+        let c = c_rx.await?;
+        ab.par_iter_mut()
+            .zip_eq(c.par_iter())
+            .with_min_len(512)
+            .for_each(|(a, b)| {
+                *a -= b;
+            });
+        local_ab_span.exit();
+        compute_ab_span.exit();
         Ok(ab)
     }
 
-    fn calculate_coeff<C: CurveGroup>(
-        &mut self,
-        initial: PointShare<T, C>,
-        query: &[C::Affine],
-        vk_param: C::Affine,
-        input_assignment: &[C::ScalarField],
-        aux_assignment: &CurveFieldShareVec<T, C>,
-    ) -> PointShare<T, C>
-    where
-        T: EcMpcProtocol<C>,
-        T: MSMProvider<C>,
-    {
-        tracing::debug!("calculate coeffs..");
+    fn calculate_coeff_g1(
+        id: T::PartyID,
+        initial: T::PointShareG1,
+        query: &[P::G1Affine],
+        vk_param: P::G1Affine,
+        input_assignment: &[P::ScalarField],
+        aux_assignment: &[T::ArithmeticShare],
+    ) -> T::PointShareG1 {
         let pub_len = input_assignment.len();
-        let pub_acc = C::msm_unchecked(&query[1..=pub_len], input_assignment);
-        let priv_acc = MSMProvider::<C>::msm_public_points(
-            &mut self.driver,
-            &query[1 + pub_len..],
-            aux_assignment,
+
+        // we block this thread of the runtime here.
+        // It should not matter too much, as we have multithreaded
+        // runtime.
+        let (pub_acc, priv_acc) = rayon::join(
+            || P::G1::msm_unchecked(&query[1..=pub_len], input_assignment),
+            || T::msm_public_points_g1(&query[1 + pub_len..], aux_assignment),
         );
 
         let mut res = initial;
-        EcMpcProtocol::<C>::add_assign_points_public_affine(&mut self.driver, &mut res, &query[0]);
-        EcMpcProtocol::<C>::add_assign_points_public_affine(&mut self.driver, &mut res, &vk_param);
-        EcMpcProtocol::<C>::add_assign_points_public(&mut self.driver, &mut res, &pub_acc);
-        EcMpcProtocol::<C>::add_assign_points(&mut self.driver, &mut res, &priv_acc);
-
-        tracing::debug!("done..");
+        T::add_assign_points_public_g1(id, &mut res, &query[0].into_group());
+        T::add_assign_points_public_g1(id, &mut res, &vk_param.into_group());
+        T::add_assign_points_public_g1(id, &mut res, &pub_acc);
+        T::add_assign_points_g1(&mut res, &priv_acc);
         res
     }
 
-    fn create_proof_with_assignment(
-        &mut self,
-        zkey: &ZKey<P>,
-        r: FieldShare<T, P>,
-        s: FieldShare<T, P>,
-        h: &FieldShareVec<T, P>,
+    fn calculate_coeff_g2(
+        id: T::PartyID,
+        initial: T::PointShareG2,
+        query: &[P::G2Affine],
+        vk_param: P::G2Affine,
         input_assignment: &[P::ScalarField],
-        aux_assignment: &FieldShareVec<T, P>,
+        aux_assignment: &[T::ArithmeticShare],
+    ) -> T::PointShareG2 {
+        let pub_len = input_assignment.len();
+
+        // we block this thread of the runtime here.
+        // It should not matter too much, as we have multithreaded
+        // runtime.
+        let (pub_acc, priv_acc) = rayon::join(
+            || P::G2::msm_unchecked(&query[1..=pub_len], input_assignment),
+            || T::msm_public_points_g2(&query[1 + pub_len..], aux_assignment),
+        );
+
+        let mut res = initial;
+        T::add_assign_points_public_g2(id, &mut res, &query[0].into_group());
+        T::add_assign_points_public_g2(id, &mut res, &vk_param.into_group());
+        T::add_assign_points_public_g2(id, &mut res, &pub_acc);
+        T::add_assign_points_g2(&mut res, &priv_acc);
+        res
+    }
+
+    #[instrument(level = "debug", name = "create proof with assignment", skip_all)]
+    async fn create_proof_with_assignment(
+        mut self,
+        zkey: &ZKey<P>,
+        r: T::ArithmeticShare,
+        s: T::ArithmeticShare,
+        h: Vec<P::ScalarField>,
+        input_assignment: Arc<Vec<P::ScalarField>>,
+        aux_assignment: Arc<Vec<T::ArithmeticShare>>,
     ) -> Result<Groth16Proof<P>> {
-        tracing::debug!("create proof with assignment...");
-        //let c_acc_time = start_timer!(|| "Compute C");
-        let h_acc = MSMProvider::<P::G1>::msm_public_points(&mut self.driver, &zkey.h_query, h);
-
-        // Compute C
-        let l_aux_acc = MSMProvider::<P::G1>::msm_public_points(
-            &mut self.driver,
-            &zkey.l_query,
-            aux_assignment,
-        );
-
         let delta_g1 = zkey.delta_g1.into_group();
-        let rs = self.driver.mul(&r, &s)?;
-        let r_s_delta_g1 = self.driver.scalar_mul_public_point(&delta_g1, &rs);
+        let (l_acc_tx, l_acc_rx) = oneshot::channel();
+        let h_query = Arc::clone(&zkey.h_query);
+        let l_query = Arc::clone(&zkey.l_query);
 
-        //end_timer!(c_acc_time);
-
-        // Compute A
-        // let a_acc_time = start_timer!(|| "Compute A");
-        let r_g1 = self.driver.scalar_mul_public_point(&delta_g1, &r);
-
-        let g_a = self.calculate_coeff::<P::G1>(
-            r_g1,
-            &zkey.a_query,
-            zkey.vk.alpha_g1,
-            input_assignment,
-            aux_assignment,
-        );
-
-        // Open here since g_a is part of proof
-        let g_a_opened = EcMpcProtocol::<P::G1>::open_point(&mut self.driver, &g_a)?;
-        let s_g_a = self.driver.scalar_mul_public_point(&g_a_opened, &s);
-        // end_timer!(a_acc_time);
-
-        // Compute B in G1
-        // In original implementation this is skipped if r==0, however r is shared in our case
-        //  let b_g1_acc_time = start_timer!(|| "Compute B in G1");
-        let s_g1 = self.driver.scalar_mul_public_point(&delta_g1, &s);
-        let g1_b = self.calculate_coeff::<P::G1>(
-            s_g1,
-            &zkey.b_g1_query,
-            zkey.beta_g1,
-            input_assignment,
-            aux_assignment,
-        );
-        let r_g1_b = EcMpcProtocol::<P::G1>::scalar_mul(&mut self.driver, &g1_b, &r)?;
-        //  end_timer!(b_g1_acc_time);
-
-        // Compute B in G2
+        let party_id = self.driver.get_party_id();
+        let (r_g1_tx, r_g1_rx) = oneshot::channel();
+        let (s_g1_tx, s_g1_rx) = oneshot::channel();
+        let (s_g2_tx, s_g2_rx) = oneshot::channel();
+        let a_query = Arc::clone(&zkey.a_query);
+        let b_g1_query = Arc::clone(&zkey.b_g1_query);
+        let b_g2_query = Arc::clone(&zkey.b_g2_query);
+        let input_assignment1 = Arc::clone(&input_assignment);
+        let input_assignment2 = Arc::clone(&input_assignment);
+        let input_assignment3 = Arc::clone(&input_assignment);
+        let aux_assignment1 = Arc::clone(&aux_assignment);
+        let aux_assignment2 = Arc::clone(&aux_assignment);
+        let aux_assignment3 = Arc::clone(&aux_assignment);
+        let aux_assignment4 = Arc::clone(&aux_assignment);
+        let alpha_g1 = zkey.vk.alpha_g1;
+        let beta_g1 = zkey.beta_g1;
+        let beta_g2 = zkey.vk.beta_g2;
         let delta_g2 = zkey.vk.delta_g2.into_group();
-        //  let b_g2_acc_time = start_timer!(|| "Compute B in G2");
-        let s_g2 = self.driver.scalar_mul_public_point(&delta_g2, &s);
-        let g2_b = self.calculate_coeff::<P::G2>(
-            s_g2,
-            &zkey.b_g2_query,
-            zkey.vk.beta_g2,
-            input_assignment,
-            aux_assignment,
-        );
-        // end_timer!(b_g2_acc_time);
 
-        //  let c_time = start_timer!(|| "Finish C");
+        rayon::spawn(move || {
+            let compute_a =
+                tracing::debug_span!("compute A in create proof with assignment").entered();
+            // Compute A
+            let r_g1 = T::scalar_mul_public_point_g1(&delta_g1, r);
+            let r_g1 = Self::calculate_coeff_g1(
+                party_id,
+                r_g1,
+                &a_query,
+                alpha_g1,
+                &input_assignment1[1..],
+                &aux_assignment1,
+            );
+            r_g1_tx.send(r_g1).expect("not dropped");
+            compute_a.exit();
+        });
+
+        rayon::spawn(move || {
+            let compute_b =
+                tracing::debug_span!("compute B/G1 in create proof with assignment").entered();
+            // Compute B in G1
+            // In original implementation this is skipped if r==0, however r is shared in our case
+            let s_g1 = T::scalar_mul_public_point_g1(&delta_g1, s);
+            let s_g1 = Self::calculate_coeff_g1(
+                party_id,
+                s_g1,
+                &b_g1_query,
+                beta_g1,
+                &input_assignment2[1..],
+                &aux_assignment2,
+            );
+            s_g1_tx.send(s_g1).expect("not dropped");
+            compute_b.exit();
+        });
+
+        rayon::spawn(move || {
+            let compute_b =
+                tracing::debug_span!("compute B/G2 in create proof with assignment").entered();
+            // Compute B in G2
+            let s_g2 = T::scalar_mul_public_point_g2(&delta_g2, s);
+            let s_g2 = Self::calculate_coeff_g2(
+                party_id,
+                s_g2,
+                &b_g2_query,
+                beta_g2,
+                &input_assignment3[1..],
+                &aux_assignment3,
+            );
+            s_g2_tx.send(s_g2).expect("not dropped");
+            compute_b.exit();
+        });
+
+        rayon::spawn(move || {
+            let msm_l_query = tracing::debug_span!("msm l_query").entered();
+            let result = T::msm_public_points_g1(l_query.as_ref(), &aux_assignment4);
+            l_acc_tx.send(result).expect("channel not dropped");
+            msm_l_query.exit();
+        });
+
+        // TODO we can remove the networking round in msm_and_mul because we only have linear operations afterwards
+        let (h_acc, rs) = self.driver.msm_and_mul(h, h_query, r, s).await?;
+        let r_s_delta_g1 = T::scalar_mul_public_point_g1(&delta_g1, rs);
+
+        let l_aux_acc = l_acc_rx.await.expect("channel not dropped");
+
+        let calculate_coeff_span = tracing::debug_span!("calculate coeff").entered();
+        let g_a = r_g1_rx.await?;
+        let g1_b = s_g1_rx.await?;
+        calculate_coeff_span.exit();
+
+        let network_round = tracing::debug_span!("network round after calc coeff").entered();
+        let (g_a_opened, r_g1_b) = self
+            .driver
+            .open_point_and_scalar_mul(&g_a, &g1_b, r)
+            .await?;
+        network_round.exit();
+
+        let last_round = tracing::debug_span!("finish open two points and some adds").entered();
+        let s_g_a = T::scalar_mul_public_point_g1(&g_a_opened, s);
+
         let mut g_c = s_g_a;
-        EcMpcProtocol::<P::G1>::add_assign_points(&mut self.driver, &mut g_c, &r_g1_b);
-        EcMpcProtocol::<P::G1>::sub_assign_points(&mut self.driver, &mut g_c, &r_s_delta_g1);
-        EcMpcProtocol::<P::G1>::add_assign_points(&mut self.driver, &mut g_c, &l_aux_acc);
-        EcMpcProtocol::<P::G1>::add_assign_points(&mut self.driver, &mut g_c, &h_acc);
-        //  end_timer!(c_time);
+        T::add_assign_points_g1(&mut g_c, &r_g1_b);
+        T::sub_assign_points_g1(&mut g_c, &r_s_delta_g1);
+        T::add_assign_points_g1(&mut g_c, &l_aux_acc);
+        T::add_assign_points_g1(&mut g_c, &h_acc);
 
-        tracing::debug!("almost done...");
-        let (g_c_opened, g2_b_opened) =
-            PairingEcMpcProtocol::<P>::open_two_points(&mut self.driver, &g_c, &g2_b)?;
+        let g2_b = s_g2_rx.await?;
+        let (g_c_opened, g2_b_opened) = self.driver.open_two_points(g_c, g2_b).await?;
+        last_round.exit();
+        self.driver.close_network().await?;
 
         Ok(Groth16Proof {
             pi_a: g_a_opened.into_affine(),
@@ -326,73 +482,72 @@ where
     }
 }
 
-impl<P: Pairing> Rep3CoGroth16<P>
+impl<P: Pairing> Rep3CoGroth16<P, Rep3MpcNet>
 where
     P: CircomArkworksPairingBridge,
     P::BaseField: CircomArkworksPrimeFieldBridge,
     P::ScalarField: CircomArkworksPrimeFieldBridge,
 {
     /// Create a new [Rep3CoGroth16] protocol with a given network configuration.
-    pub fn with_network_config(config: NetworkConfig) -> Result<Self> {
-        let mpc_net = Rep3MpcNet::new(config)?;
-        let driver = Rep3Protocol::<P::ScalarField, Rep3MpcNet>::new(mpc_net)?;
-        Ok(CoGroth16::new(driver))
+    pub async fn with_network_config(config: NetworkConfig) -> Result<Self> {
+        let mpc_net = Rep3MpcNet::new(config).await?;
+        let mut io_context0 = IoContext::init(mpc_net).await?;
+        let io_context1 = io_context0.fork().await?;
+        let driver = Rep3Groth16Driver::new(io_context0, io_context1);
+        Ok(CoGroth16 {
+            driver,
+            phantom_data: PhantomData,
+        })
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::fs::File;
-
-    use ark_bn254::Bn254;
-    use circom_types::R1CS;
-    use mpc_core::protocols::{
-        rep3::{network::Rep3MpcNet, Rep3Protocol},
-        shamir::{network::ShamirMpcNet, ShamirProtocol},
-    };
-    use rand::thread_rng;
-
-    use super::SharedWitness;
-    use circom_types::Witness;
-
-    #[ignore]
-    #[test]
-    fn test_rep3() {
-        let witness_file = File::open("../../test_vectors/bn254/multiplier2/witness.wtns").unwrap();
-        let witness = Witness::<ark_bn254::Fr>::from_reader(witness_file).unwrap();
-        let r1cs_file =
-            File::open("../../test_vectors/bn254/multiplier2/multiplier2.r1cs").unwrap();
-        let r1cs = R1CS::<ark_bn254::Bn254>::from_reader(r1cs_file).unwrap();
-        let mut rng = thread_rng();
-        let [s1, _, _] =
-            SharedWitness::<Rep3Protocol<ark_bn254::Fr, Rep3MpcNet>, Bn254>::share_rep3(
-                witness,
-                r1cs.num_inputs,
-                &mut rng,
-            );
-        println!("{}", serde_json::to_string(&s1).unwrap());
+impl<P: Pairing> ShamirCoGroth16<P, ShamirMpcNet>
+where
+    P: CircomArkworksPairingBridge,
+    P::BaseField: CircomArkworksPrimeFieldBridge,
+    P::ScalarField: CircomArkworksPrimeFieldBridge,
+{
+    /// Create a new [ShamirCoGroth16] protocol with a given network configuration.
+    pub async fn with_network_config(
+        threshold: usize,
+        config: NetworkConfig,
+        zkey: &ZKey<P>,
+    ) -> Result<Self> {
+        let domain_size = 2usize.pow(u32::try_from(zkey.pow).expect("pow fits into u32"));
+        // we need domain_size + 2 + 1 number of corr rand pairs in witness_map_from_matrices (degree_reduce_vec + r and s + 1 for fork)
+        let num_pairs = domain_size + 2 + 1;
+        let mpc_net = ShamirMpcNet::new(config).await?;
+        let preprocessing = ShamirPreprocessing::new(threshold, mpc_net, num_pairs).await?;
+        let mut protocol0 = ShamirProtocol::from(preprocessing);
+        // the protocol1 is only used for scalar_mul and a field_mul which need 1 pair each (ergo 2
+        // pairs)
+        let protocol1 = protocol0.fork_with_pairs(2).await?;
+        let driver = ShamirGroth16Driver::new(protocol0, protocol1);
+        Ok(CoGroth16 {
+            driver,
+            phantom_data: PhantomData,
+        })
     }
+}
 
-    fn test_shamir_inner(num_parties: usize, threshold: usize) {
-        let witness_file = File::open("../../test_vectors/bn254/multiplier2/witness.wtns").unwrap();
-        let witness = Witness::<ark_bn254::Fr>::from_reader(witness_file).unwrap();
-        let r1cs_file =
-            File::open("../../test_vectors/bn254/multiplier2/multiplier2.r1cs").unwrap();
-        let r1cs = R1CS::<ark_bn254::Bn254>::from_reader(r1cs_file).unwrap();
-        let mut rng = thread_rng();
-        let s1 = SharedWitness::<ShamirProtocol<ark_bn254::Fr, ShamirMpcNet>, Bn254>::share_shamir(
-            witness,
-            r1cs.num_inputs,
-            threshold,
-            num_parties,
-            &mut rng,
-        );
-        println!("{}", serde_json::to_string(&s1[0]).unwrap());
-    }
-
-    #[ignore]
-    #[test]
-    fn test_shamir() {
-        test_shamir_inner(3, 1);
+impl<P: Pairing> Groth16<P>
+where
+    P: CircomArkworksPairingBridge,
+    P::BaseField: CircomArkworksPrimeFieldBridge,
+    P::ScalarField: CircomArkworksPrimeFieldBridge,
+{
+    /// *Locally* create a `Groth16` proof. This is just the [`CoGroth16`] prover
+    /// initialized with the [`PlainDriver`].
+    ///
+    /// DOES NOT PERFORM ANY MPC. For a plain prover checkout the [Groth16 implementation of arkworks](https://docs.rs/ark-groth16/latest/ark_groth16/).
+    pub async fn plain_prove(
+        zkey: &ZKey<P>,
+        private_witness: SharedWitness<P::ScalarField, P::ScalarField>,
+    ) -> Result<Groth16Proof<P>> {
+        let prover = Self {
+            driver: PlainGroth16Driver,
+            phantom_data: PhantomData,
+        };
+        prover.prove(zkey, private_witness).await
     }
 }

@@ -4,14 +4,16 @@
 //! You will most likely need the plain PLONK implementation to verify a proof from co-PLONK. For that
 //! see the [`Plonk::verify`] method.
 
-use crate::{plonk_utils, types::Domains, CoPlonk};
+use std::marker::PhantomData;
+
+use crate::{mpc::plain::PlainPlonkDriver, plonk_utils, types::Domains, CoPlonk};
 use ark_ec::{pairing::Pairing, Group};
 use ark_ff::Field;
 use circom_types::{
-    plonk::{JsonVerificationKey, PlonkProof},
+    plonk::{JsonVerificationKey, PlonkProof, ZKey},
     traits::{CircomArkworksPairingBridge, CircomArkworksPrimeFieldBridge},
 };
-use mpc_core::protocols::plain::PlainDriver;
+use co_circom_snarks::SharedWitness;
 use num_traits::One;
 use num_traits::Zero;
 
@@ -27,7 +29,7 @@ use crate::types::Keccak256Transcript;
 ///
 /// More interesting is the [`Plonk::verify`] method. You can verify any circom PLONK proof, be it
 /// from snarkjs or one created by this project.
-pub type Plonk<P> = CoPlonk<PlainDriver<<P as Pairing>::ScalarField>, P>;
+pub type Plonk<P> = CoPlonk<P, PlainPlonkDriver>;
 
 pub(crate) struct VerifierChallenges<P: Pairing> {
     pub(super) alpha: P::ScalarField,
@@ -268,6 +270,28 @@ where
         let rhs = P::pairing(b1, P::G2::generator());
 
         lhs == rhs
+    }
+}
+
+impl<P: Pairing> Plonk<P>
+where
+    P: CircomArkworksPairingBridge,
+    P::BaseField: CircomArkworksPrimeFieldBridge,
+    P::ScalarField: CircomArkworksPrimeFieldBridge,
+{
+    /// *Locally* create a `Plonk` proof. This is just the [`CoPlonk`] prover
+    /// initialized with the [`PlainDriver`].
+    ///
+    /// DOES NOT PERFORM ANY MPC. For a plain prover checkout the [Groth16 implementation of arkworks](https://docs.rs/ark-groth16/latest/ark_groth16/).
+    pub async fn plain_prove(
+        zkey: &ZKey<P>,
+        private_witness: SharedWitness<P::ScalarField, P::ScalarField>,
+    ) -> eyre::Result<PlonkProof<P>> {
+        let prover = Self {
+            driver: PlainPlonkDriver,
+            phantom_data: PhantomData,
+        };
+        Ok(prover.prove(zkey, private_witness).await?)
     }
 }
 

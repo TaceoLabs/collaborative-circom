@@ -1,24 +1,17 @@
 use super::CoUltraCircuitBuilder;
-use crate::types::ProvingKey;
+use crate::{mpc::NoirUltraHonkProver, types::ProvingKey};
 use ark_ec::pairing::Pairing;
-use mpc_core::traits::PrimeFieldMpcProtocol;
 use ultrahonk::prelude::{CycleNode, CyclicPermutation, Polynomial, NUM_SELECTORS, NUM_WIRES};
 
-pub(crate) struct TraceData<'a, T, P: Pairing>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
-    pub(crate) wires: [&'a mut Polynomial<T::FieldShare>; NUM_WIRES],
+pub(crate) struct TraceData<'a, T: NoirUltraHonkProver<P>, P: Pairing> {
+    pub(crate) wires: [&'a mut Polynomial<T::ArithmeticShare>; NUM_WIRES],
     pub(crate) selectors: [&'a mut Polynomial<P::ScalarField>; NUM_SELECTORS],
     pub(crate) copy_cycles: Vec<CyclicPermutation>,
     pub(crate) ram_rom_offset: u32,
     pub(crate) pub_inputs_offset: u32,
 }
 
-impl<'a, T, P: Pairing> TraceData<'a, T, P>
-where
-    T: PrimeFieldMpcProtocol<P::ScalarField>,
-{
+impl<'a, T: NoirUltraHonkProver<P>, P: Pairing> TraceData<'a, T, P> {
     pub(crate) fn new(
         builder: &CoUltraCircuitBuilder<T, P>,
         proving_key: &'a mut ProvingKey<T, P>,
@@ -64,7 +57,7 @@ where
 
     pub(crate) fn construct_trace_data(
         &mut self,
-        driver: &T,
+        id: T::PartyID,
         builder: &mut CoUltraCircuitBuilder<T, P>,
         is_structured: bool,
     ) {
@@ -88,7 +81,7 @@ where
                     let trace_row_idx = block_row_idx + offset;
                     // Insert the real witness values from this block into the wire polys at the correct offset
                     self.wires[wire_idx][trace_row_idx] =
-                        builder.get_variable(var_idx).get_as_shared(driver);
+                        builder.get_variable(var_idx).get_as_shared(id);
                     // Add the address of the witness value to its corresponding copy cycle
                     self.copy_cycles[real_var_idx].push(CycleNode {
                         wire_index: wire_idx as u32,
