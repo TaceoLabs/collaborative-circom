@@ -283,7 +283,7 @@ impl<F: PrimeField> ShamirRng<F> {
         Ok((rcv_t, rcv_2t))
     }
 
-    fn get_random_double_shares_3_party(&mut self, amount: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    fn random_double_share_3_party(&mut self, amount: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
         assert_eq!(self.num_parties, 3);
         assert_eq!(self.threshold, 1);
 
@@ -341,7 +341,7 @@ impl<F: PrimeField> ShamirRng<F> {
         amount: usize,
     ) -> std::io::Result<()> {
         let (rcv_rt, rcv_r2t) = if self.num_parties == 3 && self.threshold == 1 {
-            self.get_random_double_shares_3_party(amount)
+            self.random_double_share_3_party(amount)
         } else {
             self.random_double_share(amount, network).await?
         };
