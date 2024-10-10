@@ -6,6 +6,16 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use rand::Rng;
 
+pub(crate) fn evaluate_poly<F: PrimeField>(poly: &[F], x: F) -> F {
+    let mut eval: F = poly[0].to_owned();
+    let mut x_pow = x;
+    for coeff in poly.iter().skip(1) {
+        eval += x_pow * coeff;
+        x_pow *= x;
+    }
+    eval
+}
+
 pub(crate) fn share<F: PrimeField, R: Rng>(
     secret: F,
     num_shares: usize,
@@ -13,18 +23,13 @@ pub(crate) fn share<F: PrimeField, R: Rng>(
     rng: &mut R,
 ) -> Vec<F> {
     let mut shares = Vec::with_capacity(num_shares);
-    let mut coeffs = Vec::with_capacity(degree);
+    let mut coeffs = Vec::with_capacity(degree + 1);
+    coeffs.push(secret);
     for _ in 0..degree {
         coeffs.push(F::rand(rng));
     }
     for i in 1..=num_shares {
-        let mut share = secret;
-        let i = F::from(i as u64);
-        let mut x_pow = i;
-        for coeff in coeffs.iter() {
-            share += x_pow * coeff;
-            x_pow *= i;
-        }
+        let share = evaluate_poly(&coeffs, F::from(i as u64));
         shares.push(share);
     }
     shares
@@ -244,13 +249,7 @@ mod shamir_test {
             // Get Shares
             let mut shares = Vec::with_capacity(NUM_PARTIES);
             for i in 1..=NUM_PARTIES {
-                let mut share = secret;
-                let i = F::from(i as u64);
-                let mut x_pow = i;
-                for coeff in poly.iter().skip(1) {
-                    share += x_pow * coeff;
-                    x_pow *= i;
-                }
+                let share = evaluate_poly(&poly, F::from(i as u64));
                 shares.push(share);
             }
 

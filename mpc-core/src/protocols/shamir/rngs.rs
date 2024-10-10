@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use ark_ff::PrimeField;
 use itertools::{izip, Itertools};
 
@@ -7,6 +9,7 @@ use rand::{Rng, SeedableRng};
 use super::network::ShamirNetwork;
 
 pub(super) struct ShamirRng<F> {
+    pub(super) id: usize,
     pub(super) rng: RngType,
     pub(super) threshold: usize,
     pub(super) num_parties: usize,
@@ -30,6 +33,7 @@ impl<F: PrimeField> ShamirRng<F> {
         let atlas_dn_matrix = Self::generate_atlas_dn_matrix(num_parties, threshold);
 
         Ok(Self {
+            id: network.get_id(),
             rng,
             threshold,
             num_parties,
@@ -124,6 +128,76 @@ impl<F: PrimeField> ShamirRng<F> {
                 *res += v * cell;
             }
         }
+    }
+
+    // get shared_rng_mut
+    fn get_rng_mut(&mut self, other_id: usize) -> &mut RngType {
+        match other_id.cmp(&self.id) {
+            Ordering::Less => &mut self.shared_rngs[other_id],
+            Ordering::Greater => &mut self.shared_rngs[other_id - 1],
+            Ordering::Equal => &mut self.rng,
+        }
+    }
+
+    async fn random_t_share<N: ShamirNetwork>(
+        &mut self,
+        amount: usize,
+        network: &mut N,
+    ) -> std::io::Result<Vec<Vec<F>>> {
+        let mut rcv = vec![vec![F::default(); self.num_parties]; amount];
+
+        // These are the parties for which I act as a receiver using the seeds
+        for i in 1..=self.threshold {
+            let send_id = (self.id + self.num_parties - i) & self.num_parties;
+            for r in rcv.iter_mut() {
+                r[send_id] = F::rand(self.get_rng_mut(send_id));
+            }
+        }
+        // for my share I will use the seed for the next parties alongside mine
+        let mut ids = Vec::with_capacity(self.threshold + 1);
+        let mut shares = (0..amount)
+            .map(|_| Vec::with_capacity(self.threshold + 1))
+            .collect_vec();
+        ids.push(0); // my randomness acts as the secret
+        for s in shares.iter_mut() {
+            s.push(F::rand(&mut self.rng));
+        }
+        for i in 1..=self.threshold {
+            let rcv_id = (self.id + i) & self.num_parties;
+            ids.push(rcv_id);
+            for s in shares.iter_mut() {
+                s.push(F::rand(self.get_rng_mut(rcv_id)));
+            }
+        }
+        // Interpolate polys
+        let polys = shares
+            .into_iter()
+            .map(|s| super::core::interpolate_poly::<F>(&s, &ids))
+            .collect_vec();
+        // Set my share
+        for (r, p) in rcv.iter_mut().zip(polys.iter()) {
+            r[self.id] = super::core::evaluate_poly(&p, F::from(self.id as u64 + 1));
+        }
+        // Send the share of my ranomness
+        let sending = self.num_parties - self.threshold - 1;
+        let mut to_send = vec![F::zero(); self.threshold + 1];
+        for i in 1..=sending {
+            let rcv_id = (self.id + i + self.threshold) & self.num_parties;
+            for (des, p) in to_send.iter_mut().zip(polys.iter()) {
+                *des = super::core::evaluate_poly(&p, F::from(rcv_id as u64 + 1));
+            }
+            network.send_many(rcv_id, &to_send).await?;
+        }
+        // Receive the remaining shares
+        for i in 1..=sending {
+            let send_id = (self.id + self.num_parties - self.threshold - i) & self.num_parties;
+            let shares = network.recv_many(send_id).await?;
+            for (r, s) in rcv.iter_mut().zip(shares.iter()) {
+                r[send_id] = *s;
+            }
+        }
+
+        Ok(rcv)
     }
 
     // Generates amount * num_parties random double shares
