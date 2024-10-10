@@ -22,7 +22,7 @@ ark-poly = { workspace = true }
 ark-serialize = { workspace = true }
 bytes = { workspace = true }
 eyre = { workspace = true }
-futures.workspace= true
+futures.workspace = true
 itertools = { workspace = true }
 mpc-net = { version = "0.1.2", path = "../mpc-net" }
 num-bigint = { workspace = true }
