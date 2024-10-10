@@ -250,7 +250,7 @@ impl<F: PrimeField> ShamirRng<F> {
         let mut rcv_2t = vec![vec![F::default(); self.num_parties]; amount];
 
         // These are the parties for which I act as a receiver using the seeds
-        Self::receive_seeded(self, self.threshold, &mut rcv_t);
+        self.receive_seeded(self.threshold, &mut rcv_t);
 
         // for my share I will use the seed for the next parties alongside mine
         let my_rands = (0..amount)
@@ -260,9 +260,9 @@ impl<F: PrimeField> ShamirRng<F> {
 
         // Do the same for rcv_2t (do afterwards due to seeds being used here)
         // Be careful about the order of calling the rngs
-        Self::receive_seeded_next(self, self.threshold * 2, &mut rcv_2t);
+        self.receive_seeded_next(self.threshold * 2, &mut rcv_2t);
         let polys_2t = self.get_interpolation_polys(&my_rands, self.threshold * 2);
-        Self::receive_seeded_prev(self, self.threshold * 2, &mut rcv_2t);
+        self.receive_seeded_prev(self.threshold * 2, &mut rcv_2t);
 
         // Set my share
         self.set_my_share(&mut rcv_t, &polys_t);
@@ -283,6 +283,55 @@ impl<F: PrimeField> ShamirRng<F> {
         Ok((rcv_t, rcv_2t))
     }
 
+    fn get_random_double_shares_3_party(&mut self, amount: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+        assert_eq!(self.num_parties, 3);
+        assert_eq!(self.threshold, 1);
+
+        let mut rcv_t = vec![vec![F::default(); 3]; amount];
+        let mut rcv_2t = vec![vec![F::default(); 3]; amount];
+
+        // These are the parties for which I act as a receiver using the seeds
+        // Be careful about the order of calling the rngs
+        self.receive_seeded_next(2, &mut rcv_t);
+
+        // Generate
+        let mut ids = [0; 2];
+        let mut shares = vec![[F::zero(); 2]; amount];
+        for i in 1..=2 {
+            let rcv_id = (self.id + i) % 3;
+            ids[i - 1] = rcv_id + 1;
+            let rng = self.get_rng_mut(rcv_id);
+            for s in shares.iter_mut() {
+                s[i - 1] = F::rand(rng);
+            }
+        }
+
+        // Receive the remaining now to clock rngs in the correct order
+        self.receive_seeded_prev(2, &mut rcv_t);
+
+        // Interpolate polys
+        let polys_t = shares
+            .into_iter()
+            .map(|s| super::core::interpolate_poly::<F>(&s, &ids))
+            .collect_vec();
+
+        // Set my rand on the polynomial and calculate the share
+        let mut rands = Vec::with_capacity(amount);
+        for (r, p) in rcv_t.iter_mut().zip(polys_t.iter()) {
+            r[self.id] = super::core::evaluate_poly(p, F::from(self.id as u64 + 1));
+            rands.push(super::core::evaluate_poly(p, F::zero()));
+        }
+
+        // Do the same for rcv_2t (do afterwards due to seeds being used here)
+        // Be careful about the order of calling the rngs
+        Self::receive_seeded_next(self, 2, &mut rcv_2t);
+        let polys_2t = self.get_interpolation_polys(&rands, 2);
+        Self::receive_seeded_prev(self, 2, &mut rcv_2t);
+        self.set_my_share(&mut rcv_2t, &polys_2t);
+
+        (rcv_t, rcv_2t)
+    }
+
     // Generates amount * num_parties random double shares
     // We use DN07 to generate t+1 double shares from the randomness of the n parties. Then we use Atlas to generate n double shares from the t+1 double shares. Without changing the King server in the Multiplications this only works in an semi-honest setting.
     // The matrix we use is a combined version of the DN07 and Atlas matrix, so we only have one matrix multiplication for both.
@@ -291,7 +340,11 @@ impl<F: PrimeField> ShamirRng<F> {
         network: &mut N,
         amount: usize,
     ) -> std::io::Result<()> {
-        let (rcv_rt, rcv_r2t) = self.random_double_share(amount, network).await?;
+        let (rcv_rt, rcv_r2t) = if self.num_parties == 3 && self.threshold == 1 {
+            self.get_random_double_shares_3_party(amount)
+        } else {
+            self.random_double_share(amount, network).await?
+        };
 
         // reserve buffer
         let mut r_t = vec![F::default(); amount * self.num_parties];
