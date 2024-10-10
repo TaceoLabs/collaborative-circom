@@ -139,30 +139,26 @@ impl<F: PrimeField> ShamirRng<F> {
         }
     }
 
-    async fn random_t_share<N: ShamirNetwork>(
-        &mut self,
-        amount: usize,
-        network: &mut N,
-    ) -> std::io::Result<Vec<Vec<F>>> {
-        let mut rcv = vec![vec![F::default(); self.num_parties]; amount];
-
-        // These are the parties for which I act as a receiver using the seeds
-        for i in 1..=self.threshold {
+    fn receive_seeded(&mut self, degree: usize, output: &mut [Vec<F>]) {
+        for i in 1..=degree {
             let send_id = (self.id + self.num_parties - i) & self.num_parties;
-            for r in rcv.iter_mut() {
+            for r in output.iter_mut() {
                 r[send_id] = F::rand(self.get_rng_mut(send_id));
             }
         }
-        // for my share I will use the seed for the next parties alongside mine
-        let mut ids = Vec::with_capacity(self.threshold + 1);
+    }
+
+    fn get_interpolation_polys(&mut self, my_rands: &[F], degree: usize) -> Vec<Vec<F>> {
+        let amount = my_rands.len();
+        let mut ids = Vec::with_capacity(degree + 1);
         let mut shares = (0..amount)
-            .map(|_| Vec::with_capacity(self.threshold + 1))
+            .map(|_| Vec::with_capacity(degree + 1))
             .collect_vec();
         ids.push(0); // my randomness acts as the secret
-        for s in shares.iter_mut() {
-            s.push(F::rand(&mut self.rng));
+        for (s, r) in shares.iter_mut().zip(my_rands.iter()) {
+            s.push(*r);
         }
-        for i in 1..=self.threshold {
+        for i in 1..=degree {
             let rcv_id = (self.id + i) & self.num_parties;
             ids.push(rcv_id);
             for s in shares.iter_mut() {
@@ -174,30 +170,86 @@ impl<F: PrimeField> ShamirRng<F> {
             .into_iter()
             .map(|s| super::core::interpolate_poly::<F>(&s, &ids))
             .collect_vec();
-        // Set my share
-        for (r, p) in rcv.iter_mut().zip(polys.iter()) {
-            r[self.id] = super::core::evaluate_poly(&p, F::from(self.id as u64 + 1));
+        polys
+    }
+
+    fn set_my_share(&self, output: &mut [Vec<F>], polys: &[Vec<F>]) {
+        for (r, p) in output.iter_mut().zip(polys.iter()) {
+            r[self.id] = super::core::evaluate_poly(p, F::from(self.id as u64 + 1));
         }
-        // Send the share of my ranomness
-        let sending = self.num_parties - self.threshold - 1;
-        let mut to_send = vec![F::zero(); self.threshold + 1];
+    }
+
+    async fn send_share_of_randomness<N: ShamirNetwork>(
+        &self,
+        degree: usize,
+        polys: &[Vec<F>],
+        network: &mut N,
+    ) -> std::io::Result<()> {
+        let sending = self.num_parties - degree - 1;
+        let mut to_send = vec![F::zero(); degree + 1];
         for i in 1..=sending {
-            let rcv_id = (self.id + i + self.threshold) & self.num_parties;
+            let rcv_id = (self.id + i + degree) & self.num_parties;
             for (des, p) in to_send.iter_mut().zip(polys.iter()) {
-                *des = super::core::evaluate_poly(&p, F::from(rcv_id as u64 + 1));
+                *des = super::core::evaluate_poly(p, F::from(rcv_id as u64 + 1));
             }
             network.send_many(rcv_id, &to_send).await?;
         }
-        // Receive the remaining shares
+        Ok(())
+    }
+
+    async fn receive_share_of_randomness<N: ShamirNetwork>(
+        &self,
+        degree: usize,
+        output: &mut [Vec<F>],
+        network: &mut N,
+    ) -> std::io::Result<()> {
+        let sending = self.num_parties - degree - 1;
         for i in 1..=sending {
-            let send_id = (self.id + self.num_parties - self.threshold - i) & self.num_parties;
+            let send_id = (self.id + self.num_parties - degree - i) & self.num_parties;
             let shares = network.recv_many(send_id).await?;
-            for (r, s) in rcv.iter_mut().zip(shares.iter()) {
+            for (r, s) in output.iter_mut().zip(shares.iter()) {
                 r[send_id] = *s;
             }
         }
+        Ok(())
+    }
 
-        Ok(rcv)
+    async fn random_double_share<N: ShamirNetwork>(
+        &mut self,
+        amount: usize,
+        network: &mut N,
+    ) -> std::io::Result<(Vec<Vec<F>>, Vec<Vec<F>>)> {
+        let mut rcv_t = vec![vec![F::default(); self.num_parties]; amount];
+        let mut rcv_2t = vec![vec![F::default(); self.num_parties]; amount];
+
+        // These are the parties for which I act as a receiver using the seeds
+        Self::receive_seeded(self, self.threshold, &mut rcv_t);
+        Self::receive_seeded(self, self.threshold * 2, &mut rcv_2t);
+
+        // for my share I will use the seed for the next parties alongside mine
+        let my_rands = (0..amount)
+            .map(|_| F::rand(&mut self.rng))
+            .collect::<Vec<_>>();
+        let polys_t = self.get_interpolation_polys(&my_rands, self.threshold);
+        let polys_2t = self.get_interpolation_polys(&my_rands, self.threshold * 2);
+
+        // Set my share
+        self.set_my_share(&mut rcv_t, &polys_t);
+        self.set_my_share(&mut rcv_2t, &polys_2t);
+
+        // Send the share of my ranomness
+        self.send_share_of_randomness(self.threshold, &polys_t, network)
+            .await?;
+        self.send_share_of_randomness(self.threshold * 2, &polys_2t, network)
+            .await?;
+
+        // Receive the remaining shares
+        self.receive_share_of_randomness(self.threshold, &mut rcv_t, network)
+            .await?;
+        self.receive_share_of_randomness(self.threshold * 2, &mut rcv_2t, network)
+            .await?;
+
+        Ok((rcv_t, rcv_2t))
     }
 
     // Generates amount * num_parties random double shares
