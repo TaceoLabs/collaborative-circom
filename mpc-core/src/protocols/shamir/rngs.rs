@@ -11,6 +11,7 @@ pub(super) struct ShamirRng<F> {
     pub(super) threshold: usize,
     pub(super) num_parties: usize,
     pub(super) shared_rngs: Vec<RngType>,
+    pub(super) atlas_dn_matrix: Vec<Vec<F>>,
     pub(super) r_t: Vec<F>,
     pub(super) r_2t: Vec<F>,
 }
@@ -26,11 +27,14 @@ impl<F: PrimeField> ShamirRng<F> {
 
         let shared_rngs = Self::get_shared_rngs(network, &mut rng).await?;
 
+        let atlas_dn_matrix = Self::generate_atlas_dn_matrix(num_parties, threshold);
+
         Ok(Self {
             rng,
             threshold,
             num_parties,
             shared_rngs,
+            atlas_dn_matrix,
             r_t: Vec::new(),
             r_2t: Vec::new(),
         })
@@ -79,31 +83,52 @@ impl<F: PrimeField> ShamirRng<F> {
         Ok(rngs)
     }
 
-    // I use the following matrix:
+    // We use the following (t+1 x n) Vandermonde matrix for DN07:
     // [1, 1  , 1  , 1  , ..., 1  ]
     // [1, 2  , 3  , 4  , ..., n  ]
     // [1, 2^2, 3^2, 4^2, ..., n^2]
     // ...
     // [1, 2^t, 3^t, 4^t, ..., n^t]
-    fn vandermonde_mul(inputs: &[F], res: &mut [F], num_parties: usize, threshold: usize) {
-        debug_assert_eq!(inputs.len(), num_parties);
-        debug_assert_eq!(res.len(), threshold + 1);
 
-        let row = (1..=num_parties as u64).map(F::from).collect::<Vec<_>>();
-        let mut current_row = row.clone();
+    // We use the following (n x t+1) Vandermonde matrix for Atlas:
+    // [1, 1  , 1  , 1  , ..., 1  ]
+    // [1, 2  , 3  , 4  , ..., t  ]
+    // [1, 2^2, 3^2, 4^2, ..., t^2]
+    // ...
+    // [1, 2^n, 3^n, 4^n, ..., t^n]
 
-        res[0] = inputs.iter().sum();
+    // This gives the resulting (n x n) matrix = Atlas x DN07: Each cell (row, col) has the value: sum_{i=0}^{t} (i + 1) ^ row * (col + 1) ^ i
+    fn generate_atlas_dn_matrix(num_parties: usize, threshold: usize) -> Vec<Vec<F>> {
+        let mut result = Vec::with_capacity(num_parties);
+        for row in 0..num_parties {
+            let mut row_result = Vec::with_capacity(num_parties);
+            for col in 0..num_parties {
+                let mut val = F::zero();
+                for i in 0..=threshold {
+                    val += F::from(i as u64 + 1).pow([row as u64])
+                        * F::from(col as u64 + 1).pow([i as u64]);
+                }
+                row_result.push(val);
+            }
+            result.push(row_result);
+        }
 
-        for ri in res.iter_mut().skip(1) {
-            *ri = F::zero();
-            for (c, r, i) in izip!(&mut current_row, &row, inputs) {
-                *ri += *c * i;
-                *c *= r; // Update current_row
+        result
+    }
+
+    fn mamtul(mat: &[Vec<F>], inp: &[F], outp: &mut [F]) {
+        debug_assert_eq!(outp.len(), mat.len());
+        for (res, row) in outp.iter_mut().zip(mat.iter()) {
+            debug_assert_eq!(row.len(), inp.len());
+            for (v, cell) in inp.iter().cloned().zip(row.iter()) {
+                *res += v * cell;
             }
         }
     }
 
-    // Generates amount * (self.threshold + 1) random double shares
+    // Generates amount * num_parties random double shares
+    // We use DN07 to generate t+1 double shares from the randomness of the n parties. Then we use Atlas to generate n double shares from the t+1 double shares. Without changing the King server in the Multiplications this only works in an semi-honest setting.
+    // The matrix we use is a combined version of the DN07 and Atlas matrix, so we only have one matrix multiplication for both.
     pub(super) async fn buffer_triples<N: ShamirNetwork>(
         &mut self,
         network: &mut N,
@@ -146,21 +171,18 @@ impl<F: PrimeField> ShamirRng<F> {
         }
 
         // reserve buffer
-        let mut r_t = Vec::with_capacity(amount * (self.threshold + 1));
-        let mut r_2t = Vec::with_capacity(amount * (self.threshold + 1));
+        let mut r_t = vec![F::default(); amount * self.num_parties];
+        let mut r_2t = vec![F::default(); amount * self.num_parties];
 
-        r_t.resize(amount * (self.threshold + 1), F::default());
-        r_2t.resize(amount * (self.threshold + 1), F::default());
+        // Now make the matrix multiplication
+        let r_t_chunks = r_t.chunks_exact_mut(self.num_parties);
+        let r_2t_chunks = r_2t.chunks_exact_mut(self.num_parties);
 
-        // Now make vandermonde multiplication
-        let r_t_chunks = r_t.chunks_exact_mut(self.threshold + 1);
-        let r_2t_chunks = r_2t.chunks_exact_mut(self.threshold + 1);
-
-        for (r_t_des, r_2t_des, r_t_src, r_2t_src) in
-            izip!(r_t_chunks, r_2t_chunks, rcv_rt, rcv_r2t)
-        {
-            Self::vandermonde_mul(&r_t_src, r_t_des, self.num_parties, self.threshold);
-            Self::vandermonde_mul(&r_2t_src, r_2t_des, self.num_parties, self.threshold);
+        for (des, src) in izip!(r_t_chunks, rcv_rt) {
+            Self::mamtul(&self.atlas_dn_matrix, &src, des);
+        }
+        for (des, src) in izip!(r_2t_chunks, rcv_r2t) {
+            Self::mamtul(&self.atlas_dn_matrix, &src, des);
         }
 
         self.r_t.extend(r_t);

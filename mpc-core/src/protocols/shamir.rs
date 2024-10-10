@@ -196,8 +196,8 @@ impl<F: PrimeField, N: ShamirNetwork> ShamirPreprocessing<F, N> {
             network.get_id()
         );
         let start = Instant::now();
-        // buffer_triple generates amount * (t + 1), so we ceil dive the amount we want
-        let amount = amount.div_ceil(threshold + 1);
+        // buffer_triple generates amount * num_parties, so we ceil dive the amount we want
+        let amount = amount.div_ceil(num_parties);
         rng_buffer.buffer_triples(&mut network, amount).await?;
         tracing::info!(
             "Party {}: generating took {} ms",
