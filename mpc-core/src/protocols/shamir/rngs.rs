@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use itertools::{izip, Itertools};
 
 use crate::RngType;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 
 use super::network::ShamirNetwork;
 
@@ -10,19 +10,73 @@ pub(super) struct ShamirRng<F> {
     pub(super) rng: RngType,
     pub(super) threshold: usize,
     pub(super) num_parties: usize,
+    pub(super) shared_rngs: Vec<RngType>,
     pub(super) r_t: Vec<F>,
     pub(super) r_2t: Vec<F>,
 }
 
 impl<F: PrimeField> ShamirRng<F> {
-    pub fn new(seed: [u8; crate::SEED_SIZE], threshold: usize, num_parties: usize) -> Self {
-        Self {
-            rng: RngType::from_seed(seed),
+    pub async fn new<N: ShamirNetwork>(
+        seed: [u8; crate::SEED_SIZE],
+        threshold: usize,
+        network: &mut N,
+    ) -> std::io::Result<Self> {
+        let mut rng = RngType::from_seed(seed);
+        let num_parties = network.get_num_parties();
+
+        let shared_rngs = Self::get_shared_rngs(network, &mut rng).await?;
+
+        Ok(Self {
+            rng,
             threshold,
             num_parties,
+            shared_rngs,
             r_t: Vec::new(),
             r_2t: Vec::new(),
+        })
+    }
+
+    async fn get_shared_rngs<N: ShamirNetwork>(
+        network: &mut N,
+        rng: &mut RngType,
+    ) -> std::io::Result<Vec<RngType>> {
+        type SeedType = [u8; crate::SEED_SIZE];
+        let id = network.get_id();
+        let num_parties = network.get_num_parties();
+
+        let mut rngs = Vec::with_capacity(num_parties - 1);
+        let mut seeds = vec![<SeedType>::default(); num_parties];
+        let to_interact_with_parties = num_parties - 1;
+
+        let mut send = to_interact_with_parties / 2;
+        if to_interact_with_parties & 1 == 1 && id < num_parties / 2 {
+            send += 1;
         }
+        let receive = to_interact_with_parties - send;
+        for id_off in 1..=send {
+            let rcv_id = (id + id_off) % num_parties;
+            let seed: SeedType = rng.gen();
+            seeds[rcv_id] = seed;
+            network.send(rcv_id, seed).await?;
+        }
+        for id_off in 1..=receive {
+            let send_id = (id + num_parties - id_off) % num_parties;
+            let seed = network.recv(send_id).await?;
+            seeds[send_id] = seed;
+        }
+
+        let after = seeds.split_off(id);
+        for seed in seeds {
+            debug_assert_ne!(seed, SeedType::default());
+            rngs.push(RngType::from_seed(seed));
+        }
+        debug_assert_eq!(after[0], SeedType::default());
+        for seed in after.into_iter().skip(1) {
+            debug_assert_ne!(seed, SeedType::default());
+            rngs.push(RngType::from_seed(seed));
+        }
+
+        Ok(rngs)
     }
 
     // I use the following matrix:

@@ -171,7 +171,7 @@ pub fn combine_curve_point<C: CurveGroup>(
     Ok(rec)
 }
 
-/// This type is used to construct a [`SahmirProtocol`].
+/// This type is used to construct a [`ShamirProtocol`].
 /// Preprocess `amount` number of corre;ated randomness pairs that are consumed while using the protocol.
 pub struct ShamirPreprocessing<F: PrimeField, N: ShamirNetwork> {
     threshold: usize,
@@ -188,10 +188,8 @@ impl<F: PrimeField, N: ShamirNetwork> ShamirPreprocessing<F, N> {
             eyre::bail!("Threshold too large for number of parties")
         }
 
-        let num_parties = network.get_num_parties();
-
         let seed: [u8; crate::SEED_SIZE] = RngType::from_entropy().gen();
-        let mut rng_buffer = ShamirRng::new(seed, threshold, num_parties);
+        let mut rng_buffer = ShamirRng::new(seed, threshold, &mut network).await?;
 
         tracing::info!(
             "Party {}: generating correlated randomness..",
