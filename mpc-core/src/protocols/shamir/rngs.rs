@@ -149,6 +149,32 @@ impl<F: PrimeField> ShamirRng<F> {
         }
     }
 
+    fn receive_seeded_prev(&mut self, degree: usize, output: &mut [Vec<F>]) {
+        for i in 1..=degree {
+            let send_id = (self.id + self.num_parties - i) % self.num_parties;
+            if send_id > self.id {
+                continue;
+            }
+            let rng = self.get_rng_mut(send_id);
+            for r in output.iter_mut() {
+                r[send_id] = F::rand(rng);
+            }
+        }
+    }
+
+    fn receive_seeded_next(&mut self, degree: usize, output: &mut [Vec<F>]) {
+        for i in 1..=degree {
+            let send_id = (self.id + self.num_parties - i) % self.num_parties;
+            if send_id < self.id {
+                continue;
+            }
+            let rng = self.get_rng_mut(send_id);
+            for r in output.iter_mut() {
+                r[send_id] = F::rand(rng);
+            }
+        }
+    }
+
     fn get_interpolation_polys(&mut self, my_rands: &[F], degree: usize) -> Vec<Vec<F>> {
         let amount = my_rands.len();
         let mut ids = Vec::with_capacity(degree + 1);
@@ -233,8 +259,10 @@ impl<F: PrimeField> ShamirRng<F> {
         let polys_t = self.get_interpolation_polys(&my_rands, self.threshold);
 
         // Do the same for rcv_2t (do afterwards due to seeds being used here)
-        Self::receive_seeded(self, self.threshold * 2, &mut rcv_2t);
+        // Be careful about the order of calling the rngs
+        Self::receive_seeded_next(self, self.threshold * 2, &mut rcv_2t);
         let polys_2t = self.get_interpolation_polys(&my_rands, self.threshold * 2);
+        Self::receive_seeded_prev(self, self.threshold * 2, &mut rcv_2t);
 
         // Set my share
         self.set_my_share(&mut rcv_t, &polys_t);
