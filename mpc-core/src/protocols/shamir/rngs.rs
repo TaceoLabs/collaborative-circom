@@ -141,7 +141,7 @@ impl<F: PrimeField> ShamirRng<F> {
 
     fn receive_seeded(&mut self, degree: usize, output: &mut [Vec<F>]) {
         for i in 1..=degree {
-            let send_id = (self.id + self.num_parties - i) & self.num_parties;
+            let send_id = (self.id + self.num_parties - i) % self.num_parties;
             for r in output.iter_mut() {
                 r[send_id] = F::rand(self.get_rng_mut(send_id));
             }
@@ -159,18 +159,17 @@ impl<F: PrimeField> ShamirRng<F> {
             s.push(*r);
         }
         for i in 1..=degree {
-            let rcv_id = (self.id + i) & self.num_parties;
+            let rcv_id = (self.id + i) % self.num_parties;
             ids.push(rcv_id);
             for s in shares.iter_mut() {
                 s.push(F::rand(self.get_rng_mut(rcv_id)));
             }
         }
         // Interpolate polys
-        let polys = shares
+        shares
             .into_iter()
             .map(|s| super::core::interpolate_poly::<F>(&s, &ids))
-            .collect_vec();
-        polys
+            .collect_vec()
     }
 
     fn set_my_share(&self, output: &mut [Vec<F>], polys: &[Vec<F>]) {
@@ -188,7 +187,7 @@ impl<F: PrimeField> ShamirRng<F> {
         let sending = self.num_parties - degree - 1;
         let mut to_send = vec![F::zero(); degree + 1];
         for i in 1..=sending {
-            let rcv_id = (self.id + i + degree) & self.num_parties;
+            let rcv_id = (self.id + i + degree) % self.num_parties;
             for (des, p) in to_send.iter_mut().zip(polys.iter()) {
                 *des = super::core::evaluate_poly(p, F::from(rcv_id as u64 + 1));
             }
@@ -205,7 +204,7 @@ impl<F: PrimeField> ShamirRng<F> {
     ) -> std::io::Result<()> {
         let sending = self.num_parties - degree - 1;
         for i in 1..=sending {
-            let send_id = (self.id + self.num_parties - degree - i) & self.num_parties;
+            let send_id = (self.id + self.num_parties - degree - i) % self.num_parties;
             let shares = network.recv_many(send_id).await?;
             for (r, s) in output.iter_mut().zip(shares.iter()) {
                 r[send_id] = *s;
@@ -260,41 +259,7 @@ impl<F: PrimeField> ShamirRng<F> {
         network: &mut N,
         amount: usize,
     ) -> std::io::Result<()> {
-        let rand = (0..amount)
-            .map(|_| F::rand(&mut self.rng))
-            .collect::<Vec<_>>();
-
-        let mut send = (0..self.num_parties)
-            .map(|_| Vec::with_capacity(amount * 2))
-            .collect::<Vec<_>>();
-
-        for r in rand {
-            let shares_t = super::core::share(r, self.num_parties, self.threshold, &mut self.rng);
-            let shares_2t =
-                super::core::share(r, self.num_parties, 2 * self.threshold, &mut self.rng);
-
-            for (des, src1, src2) in izip!(&mut send, shares_t, shares_2t) {
-                des.push(src1);
-                des.push(src2);
-            }
-        }
-
-        let mut rcv_rt = (0..amount)
-            .map(|_| Vec::with_capacity(self.num_parties))
-            .collect_vec();
-        let mut rcv_r2t = (0..amount)
-            .map(|_| Vec::with_capacity(self.num_parties))
-            .collect_vec();
-
-        // TODO this sometimes runs fast, but often 1 party is fast and the rest take a lot longer
-        let recv = network.send_and_recv_each_many(send).await?;
-
-        for r in recv.into_iter() {
-            for (des_r, des_r2, src) in izip!(&mut rcv_rt, &mut rcv_r2t, r.chunks_exact(2)) {
-                des_r.push(src[0]);
-                des_r2.push(src[1]);
-            }
-        }
+        let (rcv_rt, rcv_r2t) = self.random_double_share(amount, network).await?;
 
         // reserve buffer
         let mut r_t = vec![F::default(); amount * self.num_parties];
