@@ -142,8 +142,9 @@ impl<F: PrimeField> ShamirRng<F> {
     fn receive_seeded(&mut self, degree: usize, output: &mut [Vec<F>]) {
         for i in 1..=degree {
             let send_id = (self.id + self.num_parties - i) % self.num_parties;
+            let mut rng = self.get_rng_mut(send_id);
             for r in output.iter_mut() {
-                r[send_id] = F::rand(self.get_rng_mut(send_id));
+                r[send_id] = F::rand(&mut rng);
             }
         }
     }
@@ -161,8 +162,9 @@ impl<F: PrimeField> ShamirRng<F> {
         for i in 1..=degree {
             let rcv_id = (self.id + i) % self.num_parties;
             ids.push(rcv_id);
+            let mut rng = self.get_rng_mut(rcv_id);
             for s in shares.iter_mut() {
-                s.push(F::rand(self.get_rng_mut(rcv_id)));
+                s.push(F::rand(&mut rng));
             }
         }
         // Interpolate polys
@@ -185,7 +187,7 @@ impl<F: PrimeField> ShamirRng<F> {
         network: &mut N,
     ) -> std::io::Result<()> {
         let sending = self.num_parties - degree - 1;
-        let mut to_send = vec![F::zero(); degree + 1];
+        let mut to_send = vec![F::zero(); polys.len()]; // Allocate buffer only once
         for i in 1..=sending {
             let rcv_id = (self.id + i + degree) % self.num_parties;
             for (des, p) in to_send.iter_mut().zip(polys.iter()) {
@@ -236,7 +238,7 @@ impl<F: PrimeField> ShamirRng<F> {
         self.set_my_share(&mut rcv_t, &polys_t);
         self.set_my_share(&mut rcv_2t, &polys_2t);
 
-        // Send the share of my ranomness
+        // Send the share of my randomness
         self.send_share_of_randomness(self.threshold, &polys_t, network)
             .await?;
         self.send_share_of_randomness(self.threshold * 2, &polys_2t, network)
